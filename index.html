@@ -1,0 +1,1371 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SupeRR Pressure Ratings</title>
+<style>
+:root{
+  --color-fg:#14181d; --color-fg-muted:#5d6670; --color-bg:#fbfcfd;
+  --color-panel:#ffffff; --color-border-line:#e3e7eb;
+  --color-ok:#2f7a4f; --color-warn:#b8860b; --color-bad:#b4453c;
+  --cds-text-secondary:#5d6670;
+  --cds-font-size-caption:12.5px; --cds-font-size-body:15px;
+  --cds-font-size-heading:19px; --cds-font-size-title:30px;
+  --cds-font-weight-medium:600;
+  --cds-gap-xs:4px; --cds-gap-sm:8px; --cds-gap-md:14px;
+  --cds-gap-lg:22px; --cds-gap-xl:34px;
+  --cds-pad-xs:4px; --cds-pad-sm:8px; --cds-pad-md:14px;
+  --cds-pad-lg:18px; --cds-pad-xl:26px; --cds-radius:10px;
+  --cds-chart-grid:#eceff2; --cds-chart-axis:#c9cfd5;
+  --cds-chart-muted:#aab2ba; --cds-chart-reference:#b9c0c7;
+  --cds-chart-status-critical:#b4453c;
+  --cds-surface-popover:#ffffff; --cds-border:#e3e7eb;
+  --cds-shadow-popover:0 6px 20px rgba(0,0,0,.12);
+  --cds-dur-slow:420ms; --cds-ease-out:cubic-bezier(.22,.61,.36,1);
+  --font-anthropic-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --font-anthropic-serif:ui-serif,Georgia,"Times New Roman",serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --color-fg:#e8ecef; --color-fg-muted:#99a3ad; --color-bg:#12161a;
+  --color-panel:#191e23; --color-border-line:#2a3138;
+  --color-ok:#6fbf8f; --color-warn:#d9b45c; --color-bad:#e08279;
+  --cds-text-secondary:#99a3ad;
+  --cds-chart-grid:#242a30; --cds-chart-axis:#39424a;
+  --cds-chart-muted:#5d6670; --cds-chart-reference:#4a545d;
+  --cds-chart-status-critical:#e08279;
+  --cds-surface-popover:#1d2328; --cds-border:#2a3138;
+  --cds-shadow-popover:0 6px 20px rgba(0,0,0,.5);
+  color-scheme:dark;
+}}
+html,body{margin:0;background:var(--color-bg);color:var(--color-fg);
+  font-family:var(--font-anthropic-sans);font-size:var(--cds-font-size-body);line-height:1.6}
+#dash-root{max-width:1040px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-left,0px)) 70px}
+.dash-select{font:inherit;font-size:var(--cds-font-size-caption);color:var(--color-fg);
+  background-color:var(--color-panel);border:1px solid var(--color-border-line);
+  border-radius:var(--cds-radius);padding:5px 26px 5px 10px}
+.dash-skeleton{position:relative;min-height:1em;border-radius:4px;
+  background:linear-gradient(90deg,var(--cds-chart-grid),var(--color-panel),var(--cds-chart-grid));
+  background-size:200% 100%;animation:dash-sk 1.4s linear infinite;color:transparent!important}
+@keyframes dash-sk{to{background-position:-200% 0}}
+
+:root{--c1:#2f6f9f;--c2:#d4722c;--c3:#3f9c7a;--c4:#c9a227;--c5:#9b5fa8;
+      --c6:#b4453c;--c7:#5a7d8c;--c8:#8a6d3b}
+@media (prefers-color-scheme:dark){:root{--c1:#6ba8d8;--c2:#e2975c;--c3:#64bd9b;
+      --c4:#dcc25f;--c5:#b98ac4;--c6:#e08279;--c7:#8aa6b4;--c8:#bfa06a}}
+</style>
+<script>/* ---------------------------------------------------------------------
+   A small stand-in for the parts of d3 v7 the dashboard page uses, so the
+   offline file can run the page unmodified. Scales, axes, selections, the
+   line generator and the array helpers -- nothing more.
+   --------------------------------------------------------------------- */
+(function (global) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const SVG_TAGS = new Set(['svg','g','rect','circle','line','path','text','tspan',
+                            'defs','clipPath','polyline','polygon','ellipse','title']);
+
+  /* ----------------------------- arrays ----------------------------- */
+  const num = v => (v === null || v === undefined || v === '') ? NaN : +v;
+  const vals = (a, f) => Array.from(a, (d, i) => f ? num(f(d, i)) : num(d))
+                              .filter(v => !isNaN(v));
+  const max = (a, f) => { const v = vals(a, f); return v.length ? Math.max(...v) : undefined; };
+  const min = (a, f) => { const v = vals(a, f); return v.length ? Math.min(...v) : undefined; };
+  const sum = (a, f) => vals(a, f).reduce((x, y) => x + y, 0);
+  const mean = (a, f) => { const v = vals(a, f); return v.length ? sum(v) / v.length : undefined; };
+  const extent = (a, f) => [min(a, f), max(a, f)];
+  const ascending = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  function quantile(a, p, f) {
+    const v = vals(a, f).sort((x, y) => x - y);
+    if (!v.length) return undefined;
+    const i = (v.length - 1) * p, lo = Math.floor(i), h = i - lo;
+    return lo + 1 < v.length ? v[lo] * (1 - h) + v[lo + 1] * h : v[lo];
+  }
+  function groups(a, key) {
+    const m = new Map();
+    for (const d of a) { const k = key(d); if (!m.has(k)) m.set(k, []); m.get(k).push(d); }
+    return Array.from(m, ([k, v]) => [k, v]);
+  }
+  function rollups(a, reduce, key) {
+    return groups(a, key).map(([k, v]) => [k, reduce(v)]);
+  }
+
+  /* ------------------------------ ticks ----------------------------- */
+  function tickStep(lo, hi, count) {
+    const step0 = Math.abs(hi - lo) / Math.max(count, 1);
+    let step1 = Math.pow(10, Math.floor(Math.log(step0) / Math.LN10));
+    const err = step0 / step1;
+    if (err >= 7.07) step1 *= 10; else if (err >= 3.16) step1 *= 5;
+    else if (err >= 1.41) step1 *= 2;
+    return step1;
+  }
+  function ticks(lo, hi, count) {
+    if (lo === hi) return [lo];
+    const rev = hi < lo; if (rev) [lo, hi] = [hi, lo];
+    const step = tickStep(lo, hi, count || 10);
+    const out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step)
+      out.push(+v.toFixed(10));
+    return rev ? out.reverse() : out;
+  }
+  function nice(dom, count) {
+    const step = tickStep(dom[0], dom[1], count || 10);
+    return [Math.floor(dom[0] / step) * step, Math.ceil(dom[1] / step) * step];
+  }
+
+  /* ----------------------------- format ----------------------------- */
+  function format(spec) {
+    return v => {
+      if (v === null || v === undefined || isNaN(+v)) return '';
+      if (/d$/.test(spec)) return String(Math.round(+v));
+      const m = /\.(\d+)/.exec(spec);
+      if (/%$/.test(spec)) return (+v * 100).toFixed(m ? +m[1] : 0) + '%';
+      return m ? (+v).toFixed(+m[1]) : String(+v);
+    };
+  }
+
+  /* ----------------------------- scales ----------------------------- */
+  function scaleLinear() {
+    let dom = [0, 1], ran = [0, 1];
+    const s = v => {
+      const t = (dom[1] - dom[0]) === 0 ? 0 : (num(v) - dom[0]) / (dom[1] - dom[0]);
+      return ran[0] + t * (ran[1] - ran[0]);
+    };
+    s.domain = a => a === undefined ? dom : (dom = a.map(num), s);
+    s.range = a => a === undefined ? ran : (ran = a.slice(), s);
+    s.nice = c => (dom = nice(dom, c), s);
+    s.ticks = c => ticks(dom[0], dom[1], c || 10);
+    s.tickFormat = (c, spec) => format(spec || '');
+    s.copy = () => scaleLinear().domain(dom).range(ran);
+    s.bandwidth = () => 0;
+    return s;
+  }
+  function scaleBand() {
+    let dom = [], ran = [0, 1], pad = 0;
+    let step = 0, band = 0, start = 0;
+    function recalc() {
+      const n = dom.length || 1;
+      const width = ran[1] - ran[0];
+      step = width / Math.max(1, n - pad + 2 * pad);
+      step = width / (n + (n ? pad : 0));
+      band = step * (1 - pad);
+      start = ran[0] + (step * pad) / 2;
+    }
+    const s = v => { const i = dom.indexOf(v); return i < 0 ? undefined : start + i * step; };
+    s.domain = a => a === undefined ? dom : (dom = Array.from(a), recalc(), s);
+    s.range = a => a === undefined ? ran : (ran = a.slice(), recalc(), s);
+    s.padding = p => (pad = p, recalc(), s);
+    s.paddingInner = s.padding; s.paddingOuter = s.padding;
+    s.bandwidth = () => band;
+    s.step = () => step;
+    s.ticks = () => dom;
+    s.tickFormat = () => (d => String(d));
+    recalc();
+    return s;
+  }
+  function scalePoint() {
+    const b = scaleBand();
+    const s = v => { const x = b(v); return x === undefined ? undefined : x + b.bandwidth() / 2; };
+    s.domain = a => a === undefined ? b.domain() : (b.domain(a), s);
+    s.range = a => a === undefined ? b.range() : (b.range(a), s);
+    s.padding = p => (b.padding(p), s);
+    s.bandwidth = () => 0;
+    s.ticks = () => b.domain();
+    s.tickFormat = () => (d => String(d));
+    return s;
+  }
+
+  /* ---------------------------- selection --------------------------- */
+  function sel(nodes, data) {
+    const S = {
+      _n: Array.isArray(nodes) ? nodes : [nodes],
+      _d: data || [],
+      node() { return this._n[0]; },
+      size() { return this._n.length; },
+      each(f) { this._n.forEach((n, i) => f.call(n, this._d[i], i)); return this; },
+      append(tag) {
+        const made = this._n.map(n => {
+          const c = SVG_TAGS.has(tag) ? document.createElementNS(NS, tag)
+                                      : document.createElement(tag);
+          n.appendChild(c); return c;
+        });
+        return sel(made, this._d);
+      },
+      attr(k, v) {
+        this._n.forEach((n, i) => {
+          const val = typeof v === 'function' ? v(this._d[i], i) : v;
+          if (val === null || val === undefined) n.removeAttribute(k);
+          else n.setAttribute(k, val);
+        });
+        return this;
+      },
+      style(k, v) {
+        this._n.forEach((n, i) => {
+          const val = typeof v === 'function' ? v(this._d[i], i) : v;
+          n.style.setProperty(k, val);
+        });
+        return this;
+      },
+      text(v) {
+        this._n.forEach((n, i) => {
+          n.textContent = typeof v === 'function' ? v(this._d[i], i) : v;
+        });
+        return this;
+      },
+      html(v) { this._n.forEach(n => { n.innerHTML = v; }); return this; },
+      remove() { this._n.forEach(n => n.parentNode && n.parentNode.removeChild(n)); return this; },
+      datum(d) { this._d = this._n.map(() => d); return this; },
+      on(ev, fn) {
+        this._n.forEach((n, i) => n.addEventListener(ev.split('.')[0],
+          e => fn.call(n, e, this._d[i])));
+        return this;
+      },
+      call(fn, ...args) { fn(this, ...args); return this; },
+      selectAll() { return sel([], []); },   /* only ever used as a join target */
+      data(arr) { this._pending = Array.from(arr); return this; },
+      join(tag) {
+        const parent = this._parent || this._n[0];
+        const made = (this._pending || []).map(() => {
+          const c = SVG_TAGS.has(tag) ? document.createElementNS(NS, tag)
+                                      : document.createElement(tag);
+          parent.appendChild(c); return c;
+        });
+        return sel(made, this._pending || []);
+      },
+      enter() { return this; },
+      merge() { return this; },
+      exit() { return sel([], []); },
+      transition() { return this; },
+      duration() { return this; },
+      ease() { return this; },
+    };
+    return S;
+  }
+  function select(target) {
+    const node = typeof target === 'string' ? document.querySelector(target) : target;
+    const s = sel([node], [undefined]);
+    s.selectAll = function () { const t = sel([node], []); t._parent = node; return t; };
+    const origAppend = s.append.bind(s);
+    s.append = tag => { const r = origAppend(tag); wrap(r); return r; };
+    wrap(s);
+    function wrap(x) {
+      x.selectAll = function () { const t = sel([x.node()], []); t._parent = x.node(); return t; };
+      const ap = x.append.bind(x);
+      x.append = tag => { const r = ap(tag); wrap(r); return r; };
+    }
+    return s;
+  }
+
+  /* ------------------------------ axes ------------------------------ */
+  function axis(orient) {
+    return function (scale) {
+      let tickValues = null, tickFmt = null, tickCount = null, tickSizeOuter = 6;
+      const A = function (g) {
+        const values = tickValues || (scale.ticks ? scale.ticks(tickCount || 5) : scale.domain());
+        const fmt = tickFmt || (scale.tickFormat ? scale.tickFormat(tickCount || 5) : String);
+        const node = g.node();
+        const band = scale.bandwidth ? scale.bandwidth() / 2 : 0;
+        const horizontal = orient === 'bottom' || orient === 'top';
+        const r = scale.range();
+        const line = document.createElementNS(NS, 'path');
+        line.setAttribute('class', 'domain');
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke', 'currentColor');
+        line.setAttribute('d', horizontal
+          ? `M${r[0]},0H${r[1]}` : `M0,${r[0]}V${r[1]}`);
+        node.appendChild(line);
+        values.forEach(v => {
+          const pos = scale(v) + band;
+          if (pos === undefined || isNaN(pos)) return;
+          const tick = document.createElementNS(NS, 'g');
+          tick.setAttribute('class', 'tick');
+          tick.setAttribute('transform', horizontal
+            ? `translate(${pos},0)` : `translate(0,${pos})`);
+          const mark = document.createElementNS(NS, 'line');
+          mark.setAttribute('stroke', 'currentColor');
+          if (horizontal) { mark.setAttribute('y2', tickSizeOuter ? 6 : 0); }
+          else { mark.setAttribute('x2', tickSizeOuter ? -6 : 0); }
+          tick.appendChild(mark);
+          const label = document.createElementNS(NS, 'text');
+          label.setAttribute('fill', 'currentColor');
+          if (horizontal) {
+            label.setAttribute('y', 9); label.setAttribute('dy', '0.71em');
+            label.setAttribute('text-anchor', 'middle');
+          } else {
+            label.setAttribute('x', orient === 'right' ? 9 : -9);
+            label.setAttribute('dy', '0.32em');
+            label.setAttribute('text-anchor', orient === 'right' ? 'start' : 'end');
+          }
+          label.textContent = fmt(v);
+          tick.appendChild(label);
+          node.appendChild(tick);
+        });
+        return A;
+      };
+      A.ticks = c => (tickCount = c, A);
+      A.tickValues = v => (tickValues = v, A);
+      A.tickFormat = f => (tickFmt = f, A);
+      A.tickSize = n => (tickSizeOuter = n, A);
+      A.tickSizeOuter = A.tickSize;
+      A.tickPadding = () => A;
+      return A;
+    };
+  }
+
+  /* ------------------------------ line ------------------------------ */
+  function line() {
+    let xf = d => d[0], yf = d => d[1];
+    const L = data => {
+      const pts = Array.from(data, (d, i) => [xf(d, i), yf(d, i)])
+        .filter(p => !isNaN(p[0]) && !isNaN(p[1]) && p[0] !== undefined && p[1] !== undefined);
+      return pts.length ? pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]},${p[1]}`).join('') : null;
+    };
+    L.x = f => (xf = typeof f === 'function' ? f : () => f, L);
+    L.y = f => (yf = typeof f === 'function' ? f : () => f, L);
+    L.curve = () => L;
+    L.defined = () => L;
+    return L;
+  }
+
+  global.d3 = {
+    select, selectAll: select,
+    scaleLinear, scaleBand, scalePoint,
+    axisLeft: axis('left'), axisBottom: axis('bottom'), axisRight: axis('right'),
+    line, max, min, sum, mean, extent, quantile, ascending, groups, rollups,
+    ticks, format,
+  };
+})(window);
+</script>
+<script>window.__DASH_DATA__ = {"bowler_rank":[{"player_id":830,"rank":1,"name":"Josh Hazlewood","balls":1478,"hp_balls":544.0,"rating_rw":1.7039849901,"rank_lo":1.0,"rank_hi":12.1,"p_top10":0.92,"p_top10_uncond":0.92,"p_eligible":1.0},{"player_id":2681,"rank":2,"name":"Taskin Ahmed","balls":1083,"hp_balls":341.0,"rating_rw":1.1280583787,"rank_lo":1.0,"rank_hi":24.0,"p_top10":0.6989966555,"p_top10_uncond":0.6966666667,"p_eligible":0.9966666667},{"player_id":2933,"rank":3,"name":"Jasprit Bumrah","balls":1780,"hp_balls":406.0,"rating_rw":1.1191471782,"rank_lo":1.0,"rank_hi":21.05,"p_top10":0.7533333333,"p_top10_uncond":0.7533333333,"p_eligible":1.0},{"player_id":6669,"rank":4,"name":"Mohsin Khan","balls":678,"hp_balls":242.0,"rating_rw":1.1086301556,"rank_lo":1.0,"rank_hi":38.0,"p_top10":0.5993265993,"p_top10_uncond":0.5933333333,"p_eligible":0.99},{"player_id":34485,"rank":5,"name":"Sufiyan Muqeem","balls":525,"hp_balls":155.0,"rating_rw":1.0966440234,"rank_lo":1.0,"rank_hi":27.0,"p_top10":0.6325581395,"p_top10_uncond":0.4533333333,"p_eligible":0.7166666667},{"player_id":2417,"rank":6,"name":"Akeal Hosein","balls":1716,"hp_balls":566.0,"rating_rw":1.0788743513,"rank_lo":1.0,"rank_hi":27.05,"p_top10":0.6366666667,"p_top10_uncond":0.6366666667,"p_eligible":1.0},{"player_id":4816,"rank":7,"name":"Khaleel Ahmed","balls":1267,"hp_balls":195.0,"rating_rw":1.0011370399,"rank_lo":2.0,"rank_hi":30.0,"p_top10":0.5376344086,"p_top10_uncond":0.5,"p_eligible":0.93},{"player_id":781,"rank":8,"name":"Sunil Narine","balls":1528,"hp_balls":253.0,"rating_rw":0.9481163931,"rank_lo":3.0,"rank_hi":39.9,"p_top10":0.4006849315,"p_top10_uncond":0.39,"p_eligible":0.9733333333},{"player_id":27960,"rank":9,"name":"Mayank Yadav","balls":526,"hp_balls":165.0,"rating_rw":0.941576028,"rank_lo":2.0,"rank_hi":29.0,"p_top10":0.5355648536,"p_top10_uncond":0.4266666667,"p_eligible":0.7966666667},{"player_id":2876,"rank":10,"name":"Axar Patel","balls":2695,"hp_balls":583.0,"rating_rw":0.9309591671,"rank_lo":2.0,"rank_hi":38.1,"p_top10":0.4866666667,"p_top10_uncond":0.4866666667,"p_eligible":1.0},{"player_id":2320,"rank":11,"name":"Trent Boult","balls":1605,"hp_balls":496.0,"rating_rw":0.8794301034,"rank_lo":3.0,"rank_hi":39.05,"p_top10":0.4,"p_top10_uncond":0.4,"p_eligible":1.0},{"player_id":6256,"rank":12,"name":"Varun Chakravarthy","balls":2158,"hp_balls":371.0,"rating_rw":0.8589296535,"rank_lo":4.0,"rank_hi":32.05,"p_top10":0.3766666667,"p_top10_uncond":0.3766666667,"p_eligible":1.0},{"player_id":6450,"rank":13,"name":"Mujeeb Ur Rahman","balls":849,"hp_balls":327.0,"rating_rw":0.7162220125,"rank_lo":4.0,"rank_hi":63.2,"p_top10":0.2474916388,"p_top10_uncond":0.2466666667,"p_eligible":0.9966666667},{"player_id":360,"rank":14,"name":"Bhuvneshwar Kumar","balls":2288,"hp_balls":706.0,"rating_rw":0.6452316637,"rank_lo":3.0,"rank_hi":63.0,"p_top10":0.21,"p_top10_uncond":0.21,"p_eligible":1.0},{"player_id":5979,"rank":15,"name":"Abrar Ahmed","balls":776,"hp_balls":265.0,"rating_rw":0.6377801821,"rank_lo":5.0,"rank_hi":51.35,"p_top10":0.2006802721,"p_top10_uncond":0.1966666667,"p_eligible":0.98},{"player_id":4658,"rank":16,"name":"Nasum Ahmed","balls":607,"hp_balls":165.0,"rating_rw":0.6150083013,"rank_lo":5.0,"rank_hi":56.2,"p_top10":0.1976284585,"p_top10_uncond":0.1666666667,"p_eligible":0.8433333333},{"player_id":4692,"rank":17,"name":"Lockie Ferguson","balls":1132,"hp_balls":295.0,"rating_rw":0.6047801501,"rank_lo":6.0,"rank_hi":64.1,"p_top10":0.1166666667,"p_top10_uncond":0.1166666667,"p_eligible":1.0},{"player_id":479,"rank":18,"name":"Adil Rashid","balls":1323,"hp_balls":267.0,"rating_rw":0.55132465,"rank_lo":9.0,"rank_hi":76.0,"p_top10":0.0714285714,"p_top10_uncond":0.07,"p_eligible":0.98},{"player_id":2490,"rank":19,"name":"Mohammad Nawaz","balls":1017,"hp_balls":285.0,"rating_rw":0.5474346603,"rank_lo":6.0,"rank_hi":74.0,"p_top10":0.1033333333,"p_top10_uncond":0.1033333333,"p_eligible":1.0},{"player_id":6523,"rank":20,"name":"Blessing Muzarabani","balls":846,"hp_balls":282.0,"rating_rw":0.5349816428,"rank_lo":2.0,"rank_hi":79.0,"p_top10":0.2583892617,"p_top10_uncond":0.2566666667,"p_eligible":0.9933333333},{"player_id":3628,"rank":21,"name":"Kagiso Rabada","balls":1610,"hp_balls":450.0,"rating_rw":0.5257712316,"rank_lo":9.0,"rank_hi":60.05,"p_top10":0.07,"p_top10_uncond":0.07,"p_eligible":1.0},{"player_id":6643,"rank":22,"name":"Hasan Mahmud","balls":412,"hp_balls":141.0,"rating_rw":0.5117755853,"rank_lo":6.0,"rank_hi":64.7,"p_top10":0.1739130435,"p_top10_uncond":0.12,"p_eligible":0.69},{"player_id":4219,"rank":23,"name":"Krunal Pandya","balls":1286,"hp_balls":327.0,"rating_rw":0.507897256,"rank_lo":6.95,"rank_hi":75.0,"p_top10":0.1166666667,"p_top10_uncond":0.1166666667,"p_eligible":1.0},{"player_id":6355,"rank":24,"name":"Shaheen Afridi","balls":1008,"hp_balls":383.0,"rating_rw":0.478799661,"rank_lo":8.0,"rank_hi":70.05,"p_top10":0.1,"p_top10_uncond":0.1,"p_eligible":1.0},{"player_id":4101,"rank":25,"name":"Mitchell Santner","balls":1763,"hp_balls":377.0,"rating_rw":0.4733906921,"rank_lo":5.0,"rank_hi":76.05,"p_top10":0.1266666667,"p_top10_uncond":0.1266666667,"p_eligible":1.0}],"batter_rank":[{"player_id":50284,"rank":1,"name":"Vaibhav Sooryavanshi","balls":714,"hp_balls":246.0,"rating_rw":2.2925134269,"rank_lo":1.0,"rank_hi":20.1,"p_top10":0.8714285714,"p_top10_uncond":0.8133333333,"p_eligible":0.9333333333},{"player_id":1699,"rank":2,"name":"Suryakumar Yadav","balls":2812,"hp_balls":723.0,"rating_rw":1.9253116145,"rank_lo":1.0,"rank_hi":14.0,"p_top10":0.9233333333,"p_top10_uncond":0.9233333333,"p_eligible":1.0},{"player_id":23450,"rank":3,"name":"Sai Sudharsan","balls":1760,"hp_balls":539.0,"rating_rw":1.641675284,"rank_lo":2.0,"rank_hi":21.05,"p_top10":0.7466666667,"p_top10_uncond":0.7466666667,"p_eligible":1.0},{"player_id":47,"rank":4,"name":"Virat Kohli","balls":2545,"hp_balls":848.0,"rating_rw":1.4643957638,"rank_lo":1.0,"rank_hi":37.1,"p_top10":0.65,"p_top10_uncond":0.65,"p_eligible":1.0},{"player_id":768,"rank":5,"name":"Reeza Hendricks","balls":860,"hp_balls":289.0,"rating_rw":1.3596437565,"rank_lo":2.0,"rank_hi":47.0,"p_top10":0.5050167224,"p_top10_uncond":0.5033333333,"p_eligible":0.9966666667},{"player_id":4260,"rank":6,"name":"Heinrich Klaasen","balls":1480,"hp_balls":275.0,"rating_rw":1.2957448431,"rank_lo":3.0,"rank_hi":35.15,"p_top10":0.5604026846,"p_top10_uncond":0.5566666667,"p_eligible":0.9933333333},{"player_id":5553,"rank":7,"name":"Phil Salt","balls":1696,"hp_balls":413.0,"rating_rw":1.0800882346,"rank_lo":3.0,"rank_hi":50.0,"p_top10":0.3633333333,"p_top10_uncond":0.3633333333,"p_eligible":1.0},{"player_id":1077,"rank":8,"name":"David Miller","balls":1338,"hp_balls":350.0,"rating_rw":0.9867311146,"rank_lo":4.0,"rank_hi":67.05,"p_top10":0.2866666667,"p_top10_uncond":0.2866666667,"p_eligible":1.0},{"player_id":6288,"rank":9,"name":"Shubman Gill","balls":2768,"hp_balls":674.0,"rating_rw":0.9725000293,"rank_lo":2.0,"rank_hi":68.05,"p_top10":0.3833333333,"p_top10_uncond":0.3833333333,"p_eligible":1.0},{"player_id":3647,"rank":10,"name":"Shreyas Iyer","balls":1853,"hp_balls":387.0,"rating_rw":0.9700459776,"rank_lo":3.0,"rank_hi":71.05,"p_top10":0.28,"p_top10_uncond":0.28,"p_eligible":1.0},{"player_id":143,"rank":11,"name":"Dinesh Karthik","balls":683,"hp_balls":153.0,"rating_rw":0.9555223183,"rank_lo":4.0,"rank_hi":41.85,"p_top10":0.3705357143,"p_top10_uncond":0.2766666667,"p_eligible":0.7466666667},{"player_id":37052,"rank":12,"name":"Naman Dhir","balls":596,"hp_balls":142.0,"rating_rw":0.8955647899,"rank_lo":3.0,"rank_hi":52.0,"p_top10":0.3254716981,"p_top10_uncond":0.23,"p_eligible":0.7066666667},{"player_id":5039,"rank":13,"name":"Rajat Patidar","balls":970,"hp_balls":333.0,"rating_rw":0.8753757574,"rank_lo":2.0,"rank_hi":83.0,"p_top10":0.2953020134,"p_top10_uncond":0.2933333333,"p_eligible":0.9933333333},{"player_id":6396,"rank":14,"name":"Tim David","balls":1293,"hp_balls":292.0,"rating_rw":0.8114546055,"rank_lo":3.0,"rank_hi":74.0,"p_top10":0.24,"p_top10_uncond":0.24,"p_eligible":1.0},{"player_id":3700,"rank":15,"name":"Tim Seifert","balls":754,"hp_balls":213.0,"rating_rw":0.8093367287,"rank_lo":4.0,"rank_hi":63.5,"p_top10":0.2255639098,"p_top10_uncond":0.2,"p_eligible":0.8866666667},{"player_id":813,"rank":16,"name":"Jos Buttler","balls":2852,"hp_balls":787.0,"rating_rw":0.8066235948,"rank_lo":4.0,"rank_hi":66.05,"p_top10":0.2733333333,"p_top10_uncond":0.2733333333,"p_eligible":1.0},{"player_id":5939,"rank":17,"name":"Cameron Green","balls":1112,"hp_balls":292.0,"rating_rw":0.7950759987,"rank_lo":4.0,"rank_hi":67.0,"p_top10":0.27090301,"p_top10_uncond":0.27,"p_eligible":0.9966666667},{"player_id":6280,"rank":18,"name":"Harry Brook","balls":924,"hp_balls":193.0,"rating_rw":0.7237702995,"rank_lo":3.0,"rank_hi":78.6,"p_top10":0.2254545455,"p_top10_uncond":0.2066666667,"p_eligible":0.9166666667},{"player_id":4823,"rank":19,"name":"Washington Sundar","balls":671,"hp_balls":233.0,"rating_rw":0.7216540041,"rank_lo":6.0,"rank_hi":64.7,"p_top10":0.149825784,"p_top10_uncond":0.1433333333,"p_eligible":0.9566666667},{"player_id":8238,"rank":20,"name":"Sameer Rizvi","balls":304,"hp_balls":146.0,"rating_rw":0.6562484965,"rank_lo":3.25,"rank_hi":65.0,"p_top10":0.2945205479,"p_top10_uncond":0.1433333333,"p_eligible":0.4866666667},{"player_id":2367,"rank":21,"name":"Travis Head","balls":1179,"hp_balls":265.0,"rating_rw":0.6550940376,"rank_lo":4.0,"rank_hi":78.2,"p_top10":0.1739130435,"p_top10_uncond":0.1733333333,"p_eligible":0.9966666667},{"player_id":1440,"rank":22,"name":"Rahul Tripathi","balls":734,"hp_balls":261.0,"rating_rw":0.6525268341,"rank_lo":5.6,"rank_hi":87.4,"p_top10":0.1877133106,"p_top10_uncond":0.1833333333,"p_eligible":0.9766666667},{"player_id":6281,"rank":23,"name":"Abhishek Sharma","balls":2380,"hp_balls":519.0,"rating_rw":0.6413476004,"rank_lo":4.0,"rank_hi":73.0,"p_top10":0.2633333333,"p_top10_uncond":0.2633333333,"p_eligible":1.0},{"player_id":4722,"rank":24,"name":"Rashid Khan","balls":540,"hp_balls":162.0,"rating_rw":0.6235735253,"rank_lo":7.0,"rank_hi":74.45,"p_top10":0.1388888889,"p_top10_uncond":0.1166666667,"p_eligible":0.84},{"player_id":4847,"rank":25,"name":"Finn Allen","balls":854,"hp_balls":194.0,"rating_rw":0.5970823673,"rank_lo":9.0,"rank_hi":79.0,"p_top10":0.0640569395,"p_top10_uncond":0.06,"p_eligible":0.9366666667}],"bowler_contrib":[{"player_id":830,"name":"Josh Hazlewood","pulled_off_above_exp":0.3601079835,"hp_bnd_conceded":-0.0189869355,"extras_per_100":0.1300026599,"hp_dot_rate":0.220993636,"hp_runs_above":0.0838469827,"yorker_exec":0.0096111745,"positive_share":0.159999149,"hp_value_per_ball":0.1316741015,"hp_wkt_rate":0.0886381234,"pressure_delta":0.0360217611},{"player_id":2681,"name":"Taskin Ahmed","pulled_off_above_exp":0.1094747456,"hp_bnd_conceded":0.116229442,"extras_per_100":0.0133363223,"hp_dot_rate":0.2482357815,"hp_runs_above":0.1225910355,"yorker_exec":0.0184476807,"positive_share":0.0027208752,"hp_value_per_ball":0.1425594814,"hp_wkt_rate":0.1135595213,"pressure_delta":0.0768592982},{"player_id":2933,"name":"Jasprit Bumrah","pulled_off_above_exp":0.3293925039,"hp_bnd_conceded":0.0721621107,"extras_per_100":0.021008827,"hp_dot_rate":0.1858061874,"hp_runs_above":0.1466911153,"yorker_exec":0.1135317321,"positive_share":0.1383779059,"hp_value_per_ball":0.0270556011,"hp_wkt_rate":-0.0745301082,"pressure_delta":-0.0247937152},{"player_id":6669,"name":"Mohsin Khan","pulled_off_above_exp":0.3109498098,"hp_bnd_conceded":0.0475242164,"extras_per_100":0.0194169855,"hp_dot_rate":0.2091111933,"hp_runs_above":0.1503516276,"yorker_exec":0.0990298878,"positive_share":0.0976301784,"hp_value_per_ball":0.1195003037,"hp_wkt_rate":0.033905783,"pressure_delta":0.0564982947},{"player_id":34485,"name":"Sufiyan Muqeem","pulled_off_above_exp":0.0983647451,"hp_bnd_conceded":0.2909711224,"extras_per_100":0.0936010764,"hp_dot_rate":0.3944292816,"hp_runs_above":0.1784778717,"yorker_exec":-0.0537561285,"positive_share":0.1500201137,"hp_value_per_ball":0.1731901834,"hp_wkt_rate":0.1163180866,"pressure_delta":0.036717334},{"player_id":2417,"name":"Akeal Hosein","pulled_off_above_exp":0.1332829093,"hp_bnd_conceded":0.1212936233,"extras_per_100":0.1351245471,"hp_dot_rate":0.1654949229,"hp_runs_above":0.0962510042,"yorker_exec":0.0030954603,"positive_share":0.0304635946,"hp_value_per_ball":0.0570618162,"hp_wkt_rate":-0.0052741713,"pressure_delta":0.0291595878},{"player_id":4816,"name":"Khaleel Ahmed","pulled_off_above_exp":0.325297041,"hp_bnd_conceded":0.0308454817,"extras_per_100":0.1615174067,"hp_dot_rate":0.332400558,"hp_runs_above":0.1552431983,"yorker_exec":-0.0764629794,"positive_share":0.0976301784,"hp_value_per_ball":0.0821818616,"hp_wkt_rate":0.0267796537,"pressure_delta":0.0509008747},{"player_id":781,"name":"Sunil Narine","pulled_off_above_exp":0.1064833857,"hp_bnd_conceded":0.2477932539,"extras_per_100":0.2617748468,"hp_dot_rate":0.0027533832,"hp_runs_above":0.1381475676,"yorker_exec":0.0030954603,"positive_share":0.150549305,"hp_value_per_ball":0.0597449635,"hp_wkt_rate":-0.0154097681,"pressure_delta":0.0050382511},{"player_id":27960,"name":"Mayank Yadav","pulled_off_above_exp":0.2569076847,"hp_bnd_conceded":0.0763096683,"extras_per_100":-0.1726740601,"hp_dot_rate":0.3294904923,"hp_runs_above":0.2525018588,"yorker_exec":0.1439877098,"positive_share":0.0182514885,"hp_value_per_ball":0.1333503479,"hp_wkt_rate":0.0360211461,"pressure_delta":0.1429766711},{"player_id":2876,"name":"Axar Patel","pulled_off_above_exp":0.0204107501,"hp_bnd_conceded":0.1325490062,"extras_per_100":0.1835293318,"hp_dot_rate":0.0112263135,"hp_runs_above":0.1305990626,"yorker_exec":0.0209470993,"positive_share":0.074992552,"hp_value_per_ball":0.0558676379,"hp_wkt_rate":0.0201908119,"pressure_delta":0.0299109342}],"batter_contrib":[{"player_id":50284,"name":"Vaibhav Sooryavanshi","hp_dot_rate":0.0197497109,"hp_bnd_rate":1.0197440038,"hp_runs_above":0.7933798752,"positive_share":0.3828646984,"hp_survival":0.0690861851},{"player_id":1699,"name":"Suryakumar Yadav","hp_dot_rate":0.3324317476,"hp_bnd_rate":0.3138365213,"hp_runs_above":0.2327818604,"positive_share":0.1504900564,"hp_survival":0.1203758395},{"player_id":23450,"name":"Sai Sudharsan","hp_dot_rate":0.3528270049,"hp_bnd_rate":0.1510107041,"hp_runs_above":0.0013930006,"positive_share":0.3632676988,"hp_survival":0.2400633301},{"player_id":47,"name":"Virat Kohli","hp_dot_rate":0.2796251561,"hp_bnd_rate":0.032059264,"hp_runs_above":-0.0312917685,"positive_share":0.3069795774,"hp_survival":0.203270257},{"player_id":768,"name":"Reeza Hendricks","hp_dot_rate":0.4397324627,"hp_bnd_rate":0.2740848918,"hp_runs_above":0.1477762746,"positive_share":0.3007302145,"hp_survival":0.1201737177},{"player_id":4260,"name":"Heinrich Klaasen","hp_dot_rate":0.3426348397,"hp_bnd_rate":0.2004904531,"hp_runs_above":0.3456969662,"positive_share":0.3246861057,"hp_survival":0.0438651451},{"player_id":5553,"name":"Phil Salt","hp_dot_rate":0.0643908602,"hp_bnd_rate":0.3664309962,"hp_runs_above":0.2447479942,"positive_share":0.1372529044,"hp_survival":0.0852147599},{"player_id":1077,"name":"David Miller","hp_dot_rate":0.4394311264,"hp_bnd_rate":-0.0056029205,"hp_runs_above":0.097474519,"positive_share":0.1587693782,"hp_survival":0.1469788877},{"player_id":6288,"name":"Shubman Gill","hp_dot_rate":0.134716702,"hp_bnd_rate":0.1503116118,"hp_runs_above":0.0963587171,"positive_share":0.1188396665,"hp_survival":0.1367384737},{"player_id":3647,"name":"Shreyas Iyer","hp_dot_rate":0.3617636135,"hp_bnd_rate":0.0812222585,"hp_runs_above":0.1201997667,"positive_share":-0.019505956,"hp_survival":0.2160105026}],"bowler_year":[{"player_id":830,"name":"Josh Hazlewood","year":2022,"balls":563,"hp_balls":229.0,"rating_rw":1.997250967,"rank_in_year":1.0},{"player_id":6669,"name":"Mohsin Khan","year":2022,"balls":206,"hp_balls":102.0,"rating_rw":1.240947166,"rank_in_year":2.0},{"player_id":2933,"name":"Jasprit Bumrah","year":2022,"balls":382,"hp_balls":72.0,"rating_rw":0.5126849173,"rank_in_year":12.0},{"player_id":781,"name":"Sunil Narine","year":2022,"balls":342,"hp_balls":54.0,"rating_rw":0.4478021563,"rank_in_year":14.0},{"player_id":4816,"name":"Khaleel Ahmed","year":2022,"balls":242,"hp_balls":40.0,"rating_rw":0.4029631572,"rank_in_year":17.0},{"player_id":2681,"name":"Taskin Ahmed","year":2022,"balls":192,"hp_balls":49.0,"rating_rw":0.3193616399,"rank_in_year":19.0},{"player_id":2417,"name":"Akeal Hosein","year":2022,"balls":346,"hp_balls":57.0,"rating_rw":0.2954618852,"rank_in_year":20.0},{"player_id":2876,"name":"Axar Patel","year":2022,"balls":554,"hp_balls":79.0,"rating_rw":0.1772856856,"rank_in_year":25.0},{"player_id":2417,"name":"Akeal Hosein","year":2023,"balls":289,"hp_balls":85.0,"rating_rw":1.1634797751,"rank_in_year":1.0},{"player_id":4816,"name":"Khaleel Ahmed","year":2023,"balls":212,"hp_balls":60.0,"rating_rw":0.893261815,"rank_in_year":3.0},{"player_id":2681,"name":"Taskin Ahmed","year":2023,"balls":189,"hp_balls":46.0,"rating_rw":0.8766335903,"rank_in_year":4.0},{"player_id":2876,"name":"Axar Patel","year":2023,"balls":538,"hp_balls":109.0,"rating_rw":0.8297188003,"rank_in_year":7.0},{"player_id":2681,"name":"Taskin Ahmed","year":2024,"balls":308,"hp_balls":98.0,"rating_rw":1.4077719664,"rank_in_year":2.0},{"player_id":2417,"name":"Akeal Hosein","year":2024,"balls":320,"hp_balls":176.0,"rating_rw":0.8764309462,"rank_in_year":7.0},{"player_id":781,"name":"Sunil Narine","year":2024,"balls":334,"hp_balls":80.0,"rating_rw":0.7900595419,"rank_in_year":8.0},{"player_id":2876,"name":"Axar Patel","year":2024,"balls":412,"hp_balls":99.0,"rating_rw":0.7519498398,"rank_in_year":9.0},{"player_id":830,"name":"Josh Hazlewood","year":2024,"balls":122,"hp_balls":56.0,"rating_rw":0.5472264211,"rank_in_year":15.0},{"player_id":4816,"name":"Khaleel Ahmed","year":2024,"balls":417,"hp_balls":48.0,"rating_rw":0.5362099468,"rank_in_year":17.0},{"player_id":6669,"name":"Mohsin Khan","year":2024,"balls":237,"hp_balls":43.0,"rating_rw":0.4409007325,"rank_in_year":19.0},{"player_id":34485,"name":"Sufiyan Muqeem","year":2024,"balls":209,"hp_balls":43.0,"rating_rw":0.0909906992,"rank_in_year":38.0},{"player_id":34485,"name":"Sufiyan Muqeem","year":2025,"balls":291,"hp_balls":112.0,"rating_rw":1.67341564,"rank_in_year":1.0},{"player_id":2933,"name":"Jasprit Bumrah","year":2025,"balls":546,"hp_balls":182.0,"rating_rw":1.3002464519,"rank_in_year":3.0},{"player_id":830,"name":"Josh Hazlewood","year":2025,"balls":414,"hp_balls":121.0,"rating_rw":0.9890253461,"rank_in_year":5.0},{"player_id":2876,"name":"Axar Patel","year":2025,"balls":491,"hp_balls":166.0,"rating_rw":0.7259835386,"rank_in_year":11.0},{"player_id":2417,"name":"Akeal Hosein","year":2025,"balls":456,"hp_balls":198.0,"rating_rw":0.5821884168,"rank_in_year":14.0},{"player_id":2681,"name":"Taskin Ahmed","year":2025,"balls":308,"hp_balls":122.0,"rating_rw":0.0810948064,"rank_in_year":39.0},{"player_id":781,"name":"Sunil Narine","year":2026,"balls":306,"hp_balls":66.0,"rating_rw":0.9525293155,"rank_in_year":4.0},{"player_id":27960,"name":"Mayank Yadav","year":2026,"balls":320,"hp_balls":106.0,"rating_rw":0.9161844665,"rank_in_year":5.0},{"player_id":2933,"name":"Jasprit Bumrah","year":2026,"balls":474,"hp_balls":125.0,"rating_rw":0.7065575184,"rank_in_year":8.0},{"player_id":6669,"name":"Mohsin Khan","year":2026,"balls":171,"hp_balls":53.0,"rating_rw":0.5770980449,"rank_in_year":10.0},{"player_id":2417,"name":"Akeal Hosein","year":2026,"balls":305,"hp_balls":55.0,"rating_rw":0.2738036692,"rank_in_year":21.0},{"player_id":830,"name":"Josh Hazlewood","year":2026,"balls":322,"hp_balls":93.0,"rating_rw":0.2610403963,"rank_in_year":22.0},{"player_id":2876,"name":"Axar Patel","year":2026,"balls":700,"hp_balls":123.0,"rating_rw":0.2039618676,"rank_in_year":24.0}],"batter_year":[{"player_id":1077,"name":"David Miller","year":2022,"balls":508,"hp_balls":135.0,"rating_rw":1.5297838669,"rank_in_year":2.0},{"player_id":1699,"name":"Suryakumar Yadav","year":2022,"balls":713,"hp_balls":121.0,"rating_rw":1.1614670424,"rank_in_year":7.0},{"player_id":6288,"name":"Shubman Gill","year":2022,"balls":374,"hp_balls":120.0,"rating_rw":0.4477488888,"rank_in_year":20.0},{"player_id":3647,"name":"Shreyas Iyer","year":2022,"balls":527,"hp_balls":62.0,"rating_rw":-0.3171428837,"rank_in_year":56.0},{"player_id":47,"name":"Virat Kohli","year":2022,"balls":667,"hp_balls":246.0,"rating_rw":-0.6322201713,"rank_in_year":68.0},{"player_id":1699,"name":"Suryakumar Yadav","year":2023,"balls":832,"hp_balls":302.0,"rating_rw":1.4982027709,"rank_in_year":1.0},{"player_id":23450,"name":"Sai Sudharsan","year":2023,"balls":264,"hp_balls":111.0,"rating_rw":1.385866224,"rank_in_year":2.0},{"player_id":768,"name":"Reeza Hendricks","year":2023,"balls":214,"hp_balls":80.0,"rating_rw":1.3286916213,"rank_in_year":3.0},{"player_id":6288,"name":"Shubman Gill","year":2023,"balls":804,"hp_balls":222.0,"rating_rw":0.9720883682,"rank_in_year":7.0},{"player_id":4260,"name":"Heinrich Klaasen","year":2023,"balls":284,"hp_balls":45.0,"rating_rw":0.8273985378,"rank_in_year":10.0},{"player_id":47,"name":"Virat Kohli","year":2023,"balls":473,"hp_balls":169.0,"rating_rw":0.6458277863,"rank_in_year":12.0},{"player_id":5553,"name":"Phil Salt","year":2023,"balls":377,"hp_balls":94.0,"rating_rw":0.0305082729,"rank_in_year":28.0},{"player_id":1077,"name":"David Miller","year":2023,"balls":269,"hp_balls":75.0,"rating_rw":-0.1621682646,"rank_in_year":35.0},{"player_id":5553,"name":"Phil Salt","year":2024,"balls":421,"hp_balls":102.0,"rating_rw":1.7448482131,"rank_in_year":1.0},{"player_id":768,"name":"Reeza Hendricks","year":2024,"balls":303,"hp_balls":168.0,"rating_rw":1.2670257877,"rank_in_year":5.0},{"player_id":1077,"name":"David Miller","year":2024,"balls":262,"hp_balls":53.0,"rating_rw":1.0764501447,"rank_in_year":8.0},{"player_id":47,"name":"Virat Kohli","year":2024,"balls":514,"hp_balls":95.0,"rating_rw":0.8101443722,"rank_in_year":12.0},{"player_id":6288,"name":"Shubman Gill","year":2024,"balls":497,"hp_balls":102.0,"rating_rw":0.5801669275,"rank_in_year":15.0},{"player_id":4260,"name":"Heinrich Klaasen","year":2024,"balls":359,"hp_balls":109.0,"rating_rw":0.4418777382,"rank_in_year":21.0},{"player_id":23450,"name":"Sai Sudharsan","year":2024,"balls":388,"hp_balls":68.0,"rating_rw":0.4257897281,"rank_in_year":23.0},{"player_id":23450,"name":"Sai Sudharsan","year":2025,"balls":509,"hp_balls":157.0,"rating_rw":1.4816778167,"rank_in_year":2.0},{"player_id":3647,"name":"Shreyas Iyer","year":2025,"balls":344,"hp_balls":93.0,"rating_rw":1.3317414747,"rank_in_year":5.0},{"player_id":1699,"name":"Suryakumar Yadav","year":2025,"balls":596,"hp_balls":239.0,"rating_rw":1.3146822346,"rank_in_year":6.0},{"player_id":47,"name":"Virat Kohli","year":2025,"balls":466,"hp_balls":149.0,"rating_rw":0.8464613762,"rank_in_year":8.0},{"player_id":5553,"name":"Phil Salt","year":2025,"balls":491,"hp_balls":172.0,"rating_rw":0.3322580346,"rank_in_year":24.0},{"player_id":6288,"name":"Shubman Gill","year":2025,"balls":621,"hp_balls":139.0,"rating_rw":-0.5016944873,"rank_in_year":62.0},{"player_id":50284,"name":"Vaibhav Sooryavanshi","year":2026,"balls":483,"hp_balls":225.0,"rating_rw":2.0487377719,"rank_in_year":1.0},{"player_id":47,"name":"Virat Kohli","year":2026,"balls":425,"hp_balls":179.0,"rating_rw":1.6308857825,"rank_in_year":3.0},{"player_id":4260,"name":"Heinrich Klaasen","year":2026,"balls":413,"hp_balls":86.0,"rating_rw":0.9991333561,"rank_in_year":4.0},{"player_id":3647,"name":"Shreyas Iyer","year":2026,"balls":685,"hp_balls":194.0,"rating_rw":0.8858921154,"rank_in_year":5.0},{"player_id":6288,"name":"Shubman Gill","year":2026,"balls":472,"hp_balls":127.0,"rating_rw":0.7438664944,"rank_in_year":7.0},{"player_id":1699,"name":"Suryakumar Yadav","year":2026,"balls":320,"hp_balls":47.0,"rating_rw":0.6426675257,"rank_in_year":10.0},{"player_id":23450,"name":"Sai Sudharsan","year":2026,"balls":481,"hp_balls":185.0,"rating_rw":0.1781320966,"rank_in_year":21.0}],"bowler_fmt":[{"player_id":6669,"name":"Mohsin Khan","format":"T20 league","balls":678,"hp_balls":269.0,"rating_rw":1.4482390892},{"player_id":830,"name":"Josh Hazlewood","format":"T20 league","balls":938,"hp_balls":339.0,"rating_rw":1.2806337809},{"player_id":2933,"name":"Jasprit Bumrah","format":"T20 league","balls":1262,"hp_balls":280.0,"rating_rw":1.2459802247},{"player_id":4816,"name":"Khaleel Ahmed","format":"T20 league","balls":1174,"hp_balls":240.0,"rating_rw":1.2153884768},{"player_id":781,"name":"Sunil Narine","format":"T20 league","balls":1528,"hp_balls":285.0,"rating_rw":1.2005551309},{"player_id":27960,"name":"Mayank Yadav","format":"T20 league","balls":230,"hp_balls":122.0,"rating_rw":0.7748069044},{"player_id":2876,"name":"Axar Patel","format":"T20 league","balls":1289,"hp_balls":201.0,"rating_rw":0.6604777047},{"player_id":830,"name":"Josh Hazlewood","format":"T20I","balls":540,"hp_balls":212.0,"rating_rw":1.8720649815},{"player_id":2681,"name":"Taskin Ahmed","format":"T20I","balls":1083,"hp_balls":321.0,"rating_rw":1.3881439433},{"player_id":2933,"name":"Jasprit Bumrah","format":"T20I","balls":518,"hp_balls":136.0,"rating_rw":1.0535896935},{"player_id":2876,"name":"Axar Patel","format":"T20I","balls":1406,"hp_balls":344.0,"rating_rw":0.9884222806},{"player_id":2417,"name":"Akeal Hosein","format":"T20I","balls":1541,"hp_balls":482.0,"rating_rw":0.9598372213},{"player_id":34485,"name":"Sufiyan Muqeem","format":"T20I","balls":351,"hp_balls":112.0,"rating_rw":0.7181225232}],"batter_fmt":[{"player_id":50284,"name":"Vaibhav Sooryavanshi","format":"T20 league","balls":575,"hp_balls":218.0,"rating_rw":2.306986076},{"player_id":1699,"name":"Suryakumar Yadav","format":"T20 league","balls":1391,"hp_balls":422.0,"rating_rw":1.3930103815},{"player_id":4260,"name":"Heinrich Klaasen","format":"T20 league","balls":1262,"hp_balls":221.0,"rating_rw":1.3893483615},{"player_id":23450,"name":"Sai Sudharsan","format":"T20 league","balls":1760,"hp_balls":616.0,"rating_rw":1.3189558364},{"player_id":47,"name":"Virat Kohli","format":"T20 league","balls":2167,"hp_balls":787.0,"rating_rw":1.2960837748},{"player_id":3647,"name":"Shreyas Iyer","format":"T20 league","balls":1210,"hp_balls":304.0,"rating_rw":1.2313764894},{"player_id":6288,"name":"Shubman Gill","format":"T20 league","balls":2158,"hp_balls":610.0,"rating_rw":0.9223923375},{"player_id":5553,"name":"Phil Salt","format":"T20 league","balls":746,"hp_balls":150.0,"rating_rw":0.8096736533},{"player_id":1077,"name":"David Miller","format":"T20 league","balls":951,"hp_balls":276.0,"rating_rw":0.7714285928},{"player_id":1699,"name":"Suryakumar Yadav","format":"T20I","balls":1421,"hp_balls":294.0,"rating_rw":1.2691873022},{"player_id":768,"name":"Reeza Hendricks","format":"T20I","balls":860,"hp_balls":259.0,"rating_rw":1.1476376717},{"player_id":5553,"name":"Phil Salt","format":"T20I","balls":950,"hp_balls":250.0,"rating_rw":0.9247969403},{"player_id":1077,"name":"David Miller","format":"T20I","balls":387,"hp_balls":90.0,"rating_rw":0.8190313657},{"player_id":47,"name":"Virat Kohli","format":"T20I","balls":378,"hp_balls":99.0,"rating_rw":0.5717536357},{"player_id":6288,"name":"Shubman Gill","format":"T20I","balls":610,"hp_balls":126.0,"rating_rw":0.3832953011},{"player_id":4260,"name":"Heinrich Klaasen","format":"T20I","balls":218,"hp_balls":63.0,"rating_rw":0.1463937044},{"player_id":3647,"name":"Shreyas Iyer","format":"T20I","balls":643,"hp_balls":87.0,"rating_rw":-0.1508321164}],"bowler_month":[{"player_id":781,"month":"2022-03","balls":48.0,"pressure_balls":24.0,"mean_pressure":1.0544528078,"runs":27.0,"wickets":1.0,"name":"Sunil Narine"},{"player_id":781,"month":"2022-04","balls":173.0,"pressure_balls":18.0,"mean_pressure":0.824225602,"runs":158.0,"wickets":6.0,"name":"Sunil Narine"},{"player_id":781,"month":"2022-05","balls":121.0,"pressure_balls":21.0,"mean_pressure":0.5796741109,"runs":120.0,"wickets":2.0,"name":"Sunil Narine"},{"player_id":781,"month":"2023-04","balls":198.0,"pressure_balls":21.0,"mean_pressure":0.6977815316,"runs":275.0,"wickets":7.0,"name":"Sunil Narine"},{"player_id":781,"month":"2023-05","balls":98.0,"pressure_balls":10.0,"mean_pressure":0.7498819259,"runs":99.0,"wickets":4.0,"name":"Sunil Narine"},{"player_id":781,"month":"2024-03","balls":48.0,"pressure_balls":20.0,"mean_pressure":1.0521025515,"runs":59.0,"wickets":2.0,"name":"Sunil Narine"},{"player_id":781,"month":"2024-04","balls":170.0,"pressure_balls":13.0,"mean_pressure":0.5372014158,"runs":185.0,"wickets":9.0,"name":"Sunil Narine"},{"player_id":781,"month":"2024-05","balls":116.0,"pressure_balls":48.0,"mean_pressure":1.3140319998,"runs":119.0,"wickets":6.0,"name":"Sunil Narine"},{"player_id":781,"month":"2025-03","balls":42.0,"pressure_balls":0.0,"mean_pressure":0.3005143668,"runs":59.0,"wickets":1.0,"name":"Sunil Narine"},{"player_id":781,"month":"2025-04","balls":136.0,"pressure_balls":18.0,"mean_pressure":0.6326964244,"runs":156.0,"wickets":9.0,"name":"Sunil Narine"},{"player_id":781,"month":"2025-05","balls":72.0,"pressure_balls":0.0,"mean_pressure":1.542289155e-19,"runs":97.0,"wickets":2.0,"name":"Sunil Narine"},{"player_id":781,"month":"2026-04","balls":144.0,"pressure_balls":29.0,"mean_pressure":0.8612869427,"runs":150.0,"wickets":6.0,"name":"Sunil Narine"},{"player_id":781,"month":"2026-05","balls":144.0,"pressure_balls":24.0,"mean_pressure":0.553612003,"runs":159.0,"wickets":8.0,"name":"Sunil Narine"},{"player_id":830,"month":"2022-02","balls":73.0,"pressure_balls":43.0,"mean_pressure":2.8438351841,"runs":64.0,"wickets":8.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2022-04","balls":140.0,"pressure_balls":60.0,"mean_pressure":1.064168717,"runs":167.0,"wickets":10.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2022-05","balls":149.0,"pressure_balls":57.0,"mean_pressure":2.4549094319,"runs":200.0,"wickets":10.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2022-06","balls":72.0,"pressure_balls":29.0,"mean_pressure":0.9415197651,"runs":57.0,"wickets":6.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2022-09","balls":55.0,"pressure_balls":30.0,"mean_pressure":1.7908969576,"runs":98.0,"wickets":3.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2022-10","balls":74.0,"pressure_balls":30.0,"mean_pressure":1.1143700358,"runs":91.0,"wickets":3.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2023-05","balls":57.0,"pressure_balls":33.0,"mean_pressure":1.4014755865,"runs":73.0,"wickets":3.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2024-02","balls":97.0,"pressure_balls":48.0,"mean_pressure":1.2894029848,"runs":122.0,"wickets":3.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2024-09","balls":25.0,"pressure_balls":10.0,"mean_pressure":0.8747078732,"runs":30.0,"wickets":2.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2025-03","balls":48.0,"pressure_balls":0.0,"mean_pressure":0.7182979067,"runs":43.0,"wickets":5.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2025-04","balls":177.0,"pressure_balls":39.0,"mean_pressure":0.9429432757,"runs":264.0,"wickets":13.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2025-06","balls":26.0,"pressure_balls":21.0,"mean_pressure":6.2957737112,"runs":52.0,"wickets":1.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2025-08","balls":72.0,"pressure_balls":31.0,"mean_pressure":1.1860478087,"runs":113.0,"wickets":6.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2025-10","balls":72.0,"pressure_balls":6.0,"mean_pressure":1.0426620456,"runs":62.0,"wickets":6.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2026-04","balls":143.0,"pressure_balls":54.0,"mean_pressure":1.2471063093,"runs":208.0,"wickets":8.0,"name":"Josh Hazlewood"},{"player_id":830,"month":"2026-05","balls":179.0,"pressure_balls":34.0,"mean_pressure":0.8293950399,"runs":273.0,"wickets":7.0,"name":"Josh Hazlewood"},{"player_id":2417,"month":"2022-01","balls":104.0,"pressure_balls":29.0,"mean_pressure":1.1619143302,"runs":118.0,"wickets":8.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2022-02","balls":50.0,"pressure_balls":22.0,"mean_pressure":1.221002542,"runs":62.0,"wickets":0.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2022-07","balls":75.0,"pressure_balls":7.0,"mean_pressure":0.9043924684,"runs":69.0,"wickets":2.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2022-08","balls":99.0,"pressure_balls":6.0,"mean_pressure":0.6277588779,"runs":103.0,"wickets":5.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2023-03","balls":24.0,"pressure_balls":0.0,"mean_pressure":0.7786664528,"runs":61.0,"wickets":1.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2023-04","balls":24.0,"pressure_balls":0.0,"mean_pressure":0.5299629902,"runs":40.0,"wickets":1.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2023-08","balls":121.0,"pressure_balls":40.0,"mean_pressure":1.0152830212,"runs":131.0,"wickets":5.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2023-12","balls":120.0,"pressure_balls":38.0,"mean_pressure":0.9721469411,"runs":156.0,"wickets":6.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2024-02","balls":61.0,"pressure_balls":18.0,"mean_pressure":0.8598813945,"runs":106.0,"wickets":1.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2024-05","balls":54.0,"pressure_balls":26.0,"mean_pressure":0.9834016671,"runs":76.0,"wickets":1.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2024-08","balls":66.0,"pressure_balls":36.0,"mean_pressure":1.4881059767,"runs":58.0,"wickets":4.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2024-11","balls":90.0,"pressure_balls":54.0,"mean_pressure":1.7863522074,"runs":106.0,"wickets":5.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2024-12","balls":49.0,"pressure_balls":43.0,"mean_pressure":1.4836631792,"runs":28.0,"wickets":3.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2025-06","balls":72.0,"pressure_balls":24.0,"mean_pressure":0.7576816781,"runs":102.0,"wickets":5.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2025-07","balls":148.0,"pressure_balls":56.0,"mean_pressure":1.3281824963,"runs":181.0,"wickets":6.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2025-08","balls":51.0,"pressure_balls":17.0,"mean_pressure":0.9799055342,"runs":45.0,"wickets":1.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2025-09","balls":73.0,"pressure_balls":39.0,"mean_pressure":0.9598543463,"runs":64.0,"wickets":4.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2025-10","balls":49.0,"pressure_balls":40.0,"mean_pressure":2.1304707154,"runs":43.0,"wickets":5.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2025-11","balls":63.0,"pressure_balls":17.0,"mean_pressure":0.6861592041,"runs":100.0,"wickets":2.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2026-01","balls":43.0,"pressure_balls":14.0,"mean_pressure":1.1387135727,"runs":71.0,"wickets":2.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2026-04","balls":84.0,"pressure_balls":4.0,"mean_pressure":0.5371672849,"runs":107.0,"wickets":6.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2026-05","balls":67.0,"pressure_balls":19.0,"mean_pressure":1.1116917817,"runs":88.0,"wickets":2.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2026-06","balls":54.0,"pressure_balls":12.0,"mean_pressure":1.0363667668,"runs":70.0,"wickets":1.0,"name":"Akeal Hosein"},{"player_id":2417,"month":"2026-10","balls":44.0,"pressure_balls":5.0,"mean_pressure":0.7453253681,"runs":81.0,"wickets":1.0,"name":"Akeal Hosein"},{"player_id":2681,"month":"2022-07","balls":48.0,"pressure_balls":6.0,"mean_pressure":0.9205105072,"runs":82.0,"wickets":0.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2022-09","balls":50.0,"pressure_balls":18.0,"mean_pressure":0.9914489329,"runs":43.0,"wickets":3.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2022-10","balls":76.0,"pressure_balls":21.0,"mean_pressure":0.7024976608,"runs":86.0,"wickets":2.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2023-03","balls":139.0,"pressure_balls":44.0,"mean_pressure":0.812715686,"runs":148.0,"wickets":12.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2023-07","balls":50.0,"pressure_balls":0.0,"mean_pressure":0.9870391924,"runs":60.0,"wickets":4.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2024-03","balls":73.0,"pressure_balls":18.0,"mean_pressure":0.9807512851,"runs":102.0,"wickets":4.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2024-05","balls":98.0,"pressure_balls":40.0,"mean_pressure":0.9984271659,"runs":71.0,"wickets":8.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2024-10","balls":68.0,"pressure_balls":4.0,"mean_pressure":0.5120722783,"runs":108.0,"wickets":3.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2024-12","balls":69.0,"pressure_balls":39.0,"mean_pressure":2.0204800988,"runs":72.0,"wickets":7.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2025-07","balls":64.0,"pressure_balls":13.0,"mean_pressure":0.6319010999,"runs":102.0,"wickets":6.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2025-08","balls":26.0,"pressure_balls":26.0,"mean_pressure":1.5358941933,"runs":26.0,"wickets":4.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2025-09","balls":125.0,"pressure_balls":27.0,"mean_pressure":1.4262024528,"runs":150.0,"wickets":10.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2025-10","balls":69.0,"pressure_balls":55.0,"mean_pressure":1.5287260424,"runs":101.0,"wickets":4.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2025-11","balls":24.0,"pressure_balls":0.0,"mean_pressure":0.0,"runs":49.0,"wickets":0.0,"name":"Taskin Ahmed"},{"player_id":2681,"month":"2026-07","balls":74.0,"pressure_balls":24.0,"mean_pressure":0.8051494819,"runs":82.0,"wickets":0.0,"name":"Taskin Ahmed"},{"player_id":2876,"month":"2022-03","balls":24.0,"pressure_balls":0.0,"mean_pressure":0.781176925,"runs":40.0,"wickets":0.0,"name":"Axar Patel"},{"player_id":2876,"month":"2022-04","balls":139.0,"pressure_balls":3.0,"mean_pressure":0.7345922629,"runs":166.0,"wickets":4.0,"name":"Axar Patel"},{"player_id":2876,"month":"2022-05","balls":98.0,"pressure_balls":13.0,"mean_pressure":0.7844205316,"runs":111.0,"wickets":2.0,"name":"Axar Patel"},{"player_id":2876,"month":"2022-06","balls":95.0,"pressure_balls":29.0,"mean_pressure":0.8850979113,"runs":130.0,"wickets":3.0,"name":"Axar Patel"},{"player_id":2876,"month":"2022-08","balls":46.0,"pressure_balls":14.0,"mean_pressure":0.5886175765,"runs":59.0,"wickets":5.0,"name":"Axar Patel"},{"player_id":2876,"month":"2022-09","balls":109.0,"pressure_balls":37.0,"mean_pressure":0.8681137343,"runs":102.0,"wickets":9.0,"name":"Axar Patel"},{"player_id":2876,"month":"2022-10","balls":30.0,"pressure_balls":0.0,"mean_pressure":0.1276743836,"runs":66.0,"wickets":1.0,"name":"Axar Patel"},{"player_id":2876,"month":"2023-01","balls":62.0,"pressure_balls":19.0,"mean_pressure":1.6287501999,"runs":72.0,"wickets":3.0,"name":"Axar Patel"},{"player_id":2876,"month":"2023-04","balls":159.0,"pressure_balls":6.0,"mean_pressure":0.5533254361,"runs":181.0,"wickets":7.0,"name":"Axar Patel"},{"player_id":2876,"month":"2023-05","balls":129.0,"pressure_balls":39.0,"mean_pressure":1.0804392924,"runs":147.0,"wickets":4.0,"name":"Axar Patel"},{"player_id":2876,"month":"2023-08","balls":67.0,"pressure_balls":0.0,"mean_pressure":0.6947416649,"runs":92.0,"wickets":2.0,"name":"Axar Patel"},{"player_id":2876,"month":"2023-11","balls":73.0,"pressure_balls":13.0,"mean_pressure":0.8887287062,"runs":93.0,"wickets":2.0,"name":"Axar Patel"},{"player_id":2876,"month":"2023-12","balls":48.0,"pressure_balls":24.0,"mean_pressure":1.3402313192,"runs":30.0,"wickets":4.0,"name":"Axar Patel"},{"player_id":2876,"month":"2024-01","balls":49.0,"pressure_balls":24.0,"mean_pressure":1.215840547,"runs":39.0,"wickets":4.0,"name":"Axar Patel"},{"player_id":2876,"month":"2024-03","balls":66.0,"pressure_balls":26.0,"mean_pressure":1.21916286,"runs":66.0,"wickets":2.0,"name":"Axar Patel"},{"player_id":2876,"month":"2024-04","balls":157.0,"pressure_balls":13.0,"mean_pressure":0.5388630276,"runs":201.0,"wickets":7.0,"name":"Axar Patel"},{"player_id":2876,"month":"2024-05","balls":42.0,"pressure_balls":1.0,"mean_pressure":0.2657915331,"runs":69.0,"wickets":2.0,"name":"Axar Patel"},{"player_id":2876,"month":"2024-07","balls":50.0,"pressure_balls":34.0,"mean_pressure":2.3740067189,"runs":66.0,"wickets":4.0,"name":"Axar Patel"},{"player_id":2876,"month":"2024-11","balls":48.0,"pressure_balls":4.0,"mean_pressure":0.5611765419,"runs":45.0,"wickets":3.0,"name":"Axar Patel"},{"player_id":2876,"month":"2025-01","balls":85.0,"pressure_balls":37.0,"mean_pressure":1.2416341386,"runs":98.0,"wickets":6.0,"name":"Axar Patel"},{"player_id":2876,"month":"2025-03","balls":42.0,"pressure_balls":0.0,"mean_pressure":0.841412556,"runs":61.0,"wickets":0.0,"name":"Axar Patel"},{"player_id":2876,"month":"2025-04","balls":147.0,"pressure_balls":61.0,"mean_pressure":1.1055976486,"runs":189.0,"wickets":5.0,"name":"Axar Patel"},{"player_id":2876,"month":"2025-09","balls":120.0,"pressure_balls":36.0,"mean_pressure":1.1765247295,"runs":138.0,"wickets":6.0,"name":"Axar Patel"},{"player_id":2876,"month":"2025-11","balls":48.0,"pressure_balls":24.0,"mean_pressure":1.4132900886,"runs":55.0,"wickets":2.0,"name":"Axar Patel"},{"player_id":2876,"month":"2025-12","balls":31.0,"pressure_balls":6.0,"mean_pressure":0.6798158899,"runs":33.0,"wickets":3.0,"name":"Axar Patel"},{"player_id":2876,"month":"2026-01","balls":46.0,"pressure_balls":1.0,"mean_pressure":0.2802477758,"runs":74.0,"wickets":4.0,"name":"Axar Patel"},{"player_id":2876,"month":"2026-04","balls":147.0,"pressure_balls":0.0,"mean_pressure":0.555149475,"runs":197.0,"wickets":7.0,"name":"Axar Patel"},{"player_id":2876,"month":"2026-05","balls":121.0,"pressure_balls":12.0,"mean_pressure":0.6962165489,"runs":155.0,"wickets":4.0,"name":"Axar Patel"},{"player_id":2876,"month":"2026-06","balls":49.0,"pressure_balls":0.0,"mean_pressure":0.8466432082,"runs":60.0,"wickets":2.0,"name":"Axar Patel"},{"player_id":2876,"month":"2026-07","balls":85.0,"pressure_balls":30.0,"mean_pressure":1.219276443,"runs":151.0,"wickets":2.0,"name":"Axar Patel"},{"player_id":2876,"month":"2026-09","balls":79.0,"pressure_balls":24.0,"mean_pressure":1.4301377442,"runs":70.0,"wickets":4.0,"name":"Axar Patel"},{"player_id":2876,"month":"2026-10","balls":173.0,"pressure_balls":53.0,"mean_pressure":0.8163075079,"runs":324.0,"wickets":7.0,"name":"Axar Patel"},{"player_id":2933,"month":"2022-03","balls":20.0,"pressure_balls":10.0,"mean_pressure":1.604905256,"runs":43.0,"wickets":0.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2022-04","balls":193.0,"pressure_balls":21.0,"mean_pressure":0.8935763997,"runs":206.0,"wickets":5.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2022-05","balls":114.0,"pressure_balls":24.0,"mean_pressure":0.5260698989,"runs":127.0,"wickets":10.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2022-09","balls":37.0,"pressure_balls":15.0,"mean_pressure":1.0983689147,"runs":72.0,"wickets":1.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2023-08","balls":50.0,"pressure_balls":7.0,"mean_pressure":0.8195193832,"runs":33.0,"wickets":4.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2024-03","balls":50.0,"pressure_balls":0.0,"mean_pressure":0.5669798857,"runs":48.0,"wickets":3.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2024-04","balls":206.0,"pressure_balls":16.0,"mean_pressure":0.775908835,"runs":188.0,"wickets":11.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2024-05","balls":72.0,"pressure_balls":0.0,"mean_pressure":0.5877553547,"runs":79.0,"wickets":6.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2025-04","balls":147.0,"pressure_balls":22.0,"mean_pressure":0.8009190945,"runs":177.0,"wickets":9.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2025-05","balls":118.0,"pressure_balls":53.0,"mean_pressure":2.8561348364,"runs":94.0,"wickets":9.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2025-06","balls":24.0,"pressure_balls":24.0,"mean_pressure":12.3020553499,"runs":40.0,"wickets":0.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2025-09","balls":114.0,"pressure_balls":38.0,"mean_pressure":1.4141432538,"runs":126.0,"wickets":7.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2025-10","balls":25.0,"pressure_balls":0.0,"mean_pressure":0.4568482804,"runs":21.0,"wickets":2.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2025-11","balls":48.0,"pressure_balls":18.0,"mean_pressure":1.1511199644,"runs":53.0,"wickets":1.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2025-12","balls":70.0,"pressure_balls":26.0,"mean_pressure":0.8289757993,"runs":70.0,"wickets":4.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2026-01","balls":91.0,"pressure_balls":0.0,"mean_pressure":0.2505624109,"runs":141.0,"wickets":4.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2026-03","balls":26.0,"pressure_balls":0.0,"mean_pressure":0.4299053527,"runs":33.0,"wickets":0.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2026-04","balls":167.0,"pressure_balls":31.0,"mean_pressure":0.8299602579,"runs":218.0,"wickets":2.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2026-05","balls":125.0,"pressure_balls":60.0,"mean_pressure":1.6014023131,"runs":134.0,"wickets":2.0,"name":"Jasprit Bumrah"},{"player_id":2933,"month":"2026-09","balls":65.0,"pressure_balls":29.0,"mean_pressure":1.2121072391,"runs":58.0,"wickets":3.0,"name":"Jasprit Bumrah"},{"player_id":4816,"month":"2022-03","balls":24.0,"pressure_balls":0.0,"mean_pressure":0.8280550804,"runs":27.0,"wickets":2.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2022-04","balls":122.0,"pressure_balls":19.0,"mean_pressure":0.9006517309,"runs":161.0,"wickets":9.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2022-05","balls":96.0,"pressure_balls":36.0,"mean_pressure":0.8057547399,"runs":120.0,"wickets":5.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2023-04","balls":64.0,"pressure_balls":7.0,"mean_pressure":0.7967766411,"runs":94.0,"wickets":3.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2023-05","balls":148.0,"pressure_balls":35.0,"mean_pressure":1.094538791,"runs":191.0,"wickets":6.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2024-03","balls":78.0,"pressure_balls":17.0,"mean_pressure":1.1502213228,"runs":82.0,"wickets":5.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2024-04","balls":178.0,"pressure_balls":2.0,"mean_pressure":0.6964792599,"runs":279.0,"wickets":7.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2024-05","balls":68.0,"pressure_balls":9.0,"mean_pressure":0.4486392244,"runs":92.0,"wickets":5.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2024-07","balls":93.0,"pressure_balls":22.0,"mean_pressure":0.9361211524,"runs":93.0,"wickets":3.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2025-03","balls":74.0,"pressure_balls":0.0,"mean_pressure":0.8800665318,"runs":93.0,"wickets":6.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2025-04","balls":147.0,"pressure_balls":29.0,"mean_pressure":0.8525387475,"runs":216.0,"wickets":8.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2025-05","balls":69.0,"pressure_balls":0.0,"mean_pressure":0.3505259607,"runs":128.0,"wickets":1.0,"name":"Khaleel Ahmed"},{"player_id":4816,"month":"2026-04","balls":88.0,"pressure_balls":19.0,"mean_pressure":0.9143458915,"runs":124.0,"wickets":2.0,"name":"Khaleel Ahmed"},{"player_id":6669,"month":"2022-04","balls":52.0,"pressure_balls":26.0,"mean_pressure":1.0910941538,"runs":43.0,"wickets":4.0,"name":"Mohsin Khan"},{"player_id":6669,"month":"2022-05","balls":142.0,"pressure_balls":72.0,"mean_pressure":1.3937721974,"runs":124.0,"wickets":10.0,"name":"Mohsin Khan"},{"player_id":6669,"month":"2023-05","balls":64.0,"pressure_balls":37.0,"mean_pressure":3.3057703068,"runs":103.0,"wickets":3.0,"name":"Mohsin Khan"},{"player_id":6669,"month":"2024-03","balls":50.0,"pressure_balls":22.0,"mean_pressure":1.4625624251,"runs":77.0,"wickets":3.0,"name":"Mohsin Khan"},{"player_id":6669,"month":"2024-04","balls":124.0,"pressure_balls":23.0,"mean_pressure":0.8086972992,"runs":200.0,"wickets":6.0,"name":"Mohsin Khan"},{"player_id":6669,"month":"2024-05","balls":63.0,"pressure_balls":0.0,"mean_pressure":0.4044490973,"runs":98.0,"wickets":1.0,"name":"Mohsin Khan"},{"player_id":6669,"month":"2026-04","balls":98.0,"pressure_balls":20.0,"mean_pressure":0.741484416,"runs":100.0,"wickets":9.0,"name":"Mohsin Khan"},{"player_id":6669,"month":"2026-05","balls":73.0,"pressure_balls":30.0,"mean_pressure":1.1504415851,"runs":125.0,"wickets":2.0,"name":"Mohsin Khan"},{"player_id":27960,"month":"2024-03","balls":24.0,"pressure_balls":24.0,"mean_pressure":2.5138055161,"runs":27.0,"wickets":3.0,"name":"Mayank Yadav"},{"player_id":27960,"month":"2024-04","balls":52.0,"pressure_balls":7.0,"mean_pressure":0.693494187,"runs":55.0,"wickets":4.0,"name":"Mayank Yadav"},{"player_id":27960,"month":"2024-10","balls":77.0,"pressure_balls":8.0,"mean_pressure":0.4119894804,"runs":78.0,"wickets":4.0,"name":"Mayank Yadav"},{"player_id":27960,"month":"2025-04","balls":28.0,"pressure_balls":21.0,"mean_pressure":1.5070196797,"runs":36.0,"wickets":2.0,"name":"Mayank Yadav"},{"player_id":27960,"month":"2025-05","balls":25.0,"pressure_balls":1.0,"mean_pressure":0.9198972207,"runs":59.0,"wickets":0.0,"name":"Mayank Yadav"},{"player_id":27960,"month":"2026-04","balls":25.0,"pressure_balls":0.0,"mean_pressure":0.8604896424,"runs":55.0,"wickets":0.0,"name":"Mayank Yadav"},{"player_id":27960,"month":"2026-05","balls":76.0,"pressure_balls":51.0,"mean_pressure":1.4542603404,"runs":122.0,"wickets":0.0,"name":"Mayank Yadav"},{"player_id":27960,"month":"2026-07","balls":75.0,"pressure_balls":31.0,"mean_pressure":0.8705984656,"runs":63.0,"wickets":5.0,"name":"Mayank Yadav"},{"player_id":27960,"month":"2026-10","balls":144.0,"pressure_balls":22.0,"mean_pressure":0.6986529231,"runs":239.0,"wickets":8.0,"name":"Mayank Yadav"},{"player_id":34485,"month":"2024-10","balls":90.0,"pressure_balls":0.0,"mean_pressure":0.426876239,"runs":87.0,"wickets":6.0,"name":"Sufiyan Muqeem"},{"player_id":34485,"month":"2024-11","balls":30.0,"pressure_balls":0.0,"mean_pressure":0.6861570182,"runs":30.0,"wickets":2.0,"name":"Sufiyan Muqeem"},{"player_id":34485,"month":"2024-12","balls":89.0,"pressure_balls":44.0,"mean_pressure":1.3579331064,"runs":94.0,"wickets":10.0,"name":"Sufiyan Muqeem"},{"player_id":34485,"month":"2025-07","balls":26.0,"pressure_balls":12.0,"mean_pressure":1.0105637603,"runs":18.0,"wickets":1.0,"name":"Sufiyan Muqeem"},{"player_id":34485,"month":"2025-08","balls":99.0,"pressure_balls":51.0,"mean_pressure":1.6784956533,"runs":105.0,"wickets":4.0,"name":"Sufiyan Muqeem"},{"player_id":34485,"month":"2025-09","balls":70.0,"pressure_balls":9.0,"mean_pressure":0.4847604403,"runs":78.0,"wickets":4.0,"name":"Sufiyan Muqeem"},{"player_id":34485,"month":"2025-11","balls":84.0,"pressure_balls":39.0,"mean_pressure":1.4604763085,"runs":59.0,"wickets":10.0,"name":"Sufiyan Muqeem"},{"player_id":34485,"month":"2026-10","balls":25.0,"pressure_balls":0.0,"mean_pressure":0.0,"runs":34.0,"wickets":0.0,"name":"Sufiyan Muqeem"}],"batter_month":[{"player_id":47,"month":"2022-02","balls":57.0,"pressure_balls":16.0,"mean_pressure":1.1561156849,"runs":69.0,"wickets":2.0,"name":"Virat Kohli"},{"player_id":47,"month":"2022-03","balls":38.0,"pressure_balls":1.0,"mean_pressure":0.689627119,"runs":53.0,"wickets":1.0,"name":"Virat Kohli"},{"player_id":47,"month":"2022-04","balls":126.0,"pressure_balls":52.0,"mean_pressure":1.1397601787,"runs":133.0,"wickets":6.0,"name":"Virat Kohli"},{"player_id":47,"month":"2022-05","balls":142.0,"pressure_balls":122.0,"mean_pressure":2.723846902,"runs":155.0,"wickets":6.0,"name":"Virat Kohli"},{"player_id":47,"month":"2022-08","balls":80.0,"pressure_balls":18.0,"mean_pressure":0.7777153088,"runs":94.0,"wickets":1.0,"name":"Virat Kohli"},{"player_id":47,"month":"2022-09","balls":186.0,"pressure_balls":62.0,"mean_pressure":1.3984770642,"runs":261.0,"wickets":5.0,"name":"Virat Kohli"},{"player_id":47,"month":"2022-10","balls":29.0,"pressure_balls":0.0,"mean_pressure":0.609414265,"runs":49.0,"wickets":0.0,"name":"Virat Kohli"},{"player_id":47,"month":"2023-04","balls":242.0,"pressure_balls":27.0,"mean_pressure":0.8021290849,"runs":333.0,"wickets":7.0,"name":"Virat Kohli"},{"player_id":47,"month":"2023-05","balls":231.0,"pressure_balls":129.0,"mean_pressure":1.4402893393,"runs":306.0,"wickets":5.0,"name":"Virat Kohli"},{"player_id":47,"month":"2024-03","balls":133.0,"pressure_balls":44.0,"mean_pressure":1.2196380603,"runs":181.0,"wickets":2.0,"name":"Virat Kohli"},{"player_id":47,"month":"2024-04","balls":217.0,"pressure_balls":14.0,"mean_pressure":0.3629964703,"runs":319.0,"wickets":5.0,"name":"Virat Kohli"},{"player_id":47,"month":"2024-05","balls":147.0,"pressure_balls":24.0,"mean_pressure":0.8417195568,"runs":241.0,"wickets":5.0,"name":"Virat Kohli"},{"player_id":47,"month":"2025-03","balls":67.0,"pressure_balls":3.0,"mean_pressure":0.7101791252,"runs":90.0,"wickets":1.0,"name":"Virat Kohli"},{"player_id":47,"month":"2025-04","balls":259.0,"pressure_balls":97.0,"mean_pressure":1.1770946163,"runs":353.0,"wickets":6.0,"name":"Virat Kohli"},{"player_id":47,"month":"2025-05","balls":104.0,"pressure_balls":9.0,"mean_pressure":0.347232858,"runs":171.0,"wickets":4.0,"name":"Virat Kohli"},{"player_id":47,"month":"2025-06","balls":36.0,"pressure_balls":36.0,"mean_pressure":3.6711327397,"runs":43.0,"wickets":1.0,"name":"Virat Kohli"},{"player_id":47,"month":"2026-03","balls":40.0,"pressure_balls":13.0,"mean_pressure":0.9527466352,"runs":69.0,"wickets":0.0,"name":"Virat Kohli"},{"player_id":47,"month":"2026-04","balls":200.0,"pressure_balls":40.0,"mean_pressure":0.9194299318,"runs":310.0,"wickets":7.0,"name":"Virat Kohli"},{"player_id":47,"month":"2026-05","balls":185.0,"pressure_balls":123.0,"mean_pressure":2.0431683076,"runs":296.0,"wickets":5.0,"name":"Virat Kohli"},{"player_id":768,"month":"2022-06","balls":23.0,"pressure_balls":0.0,"mean_pressure":0.6136231004,"runs":27.0,"wickets":2.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2022-07","balls":118.0,"pressure_balls":16.0,"mean_pressure":0.7665048968,"runs":180.0,"wickets":3.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2022-08","balls":97.0,"pressure_balls":0.0,"mean_pressure":0.8798117321,"runs":116.0,"wickets":2.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2023-03","balls":90.0,"pressure_balls":50.0,"mean_pressure":1.9905777444,"runs":172.0,"wickets":3.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2023-08","balls":44.0,"pressure_balls":3.0,"mean_pressure":0.5618188233,"runs":56.0,"wickets":1.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2023-09","balls":39.0,"pressure_balls":9.0,"mean_pressure":0.3378849831,"runs":45.0,"wickets":2.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2023-12","balls":41.0,"pressure_balls":12.0,"mean_pressure":1.1193463394,"runs":57.0,"wickets":1.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2024-05","balls":77.0,"pressure_balls":48.0,"mean_pressure":1.3470670918,"runs":127.0,"wickets":3.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2024-08","balls":48.0,"pressure_balls":28.0,"mean_pressure":1.028871137,"runs":57.0,"wickets":3.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2024-09","balls":69.0,"pressure_balls":44.0,"mean_pressure":1.2128086032,"runs":102.0,"wickets":2.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2024-11","balls":36.0,"pressure_balls":5.0,"mean_pressure":0.914386684,"runs":45.0,"wickets":3.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2024-12","balls":73.0,"pressure_balls":50.0,"mean_pressure":1.9156710729,"runs":125.0,"wickets":2.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2025-10","balls":43.0,"pressure_balls":0.0,"mean_pressure":0.6963814419,"runs":60.0,"wickets":2.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2025-11","balls":36.0,"pressure_balls":15.0,"mean_pressure":1.1370213781,"runs":34.0,"wickets":1.0,"name":"Reeza Hendricks"},{"player_id":768,"month":"2025-12","balls":26.0,"pressure_balls":9.0,"mean_pressure":1.0668462828,"runs":21.0,"wickets":3.0,"name":"Reeza Hendricks"},{"player_id":1077,"month":"2022-03","balls":21.0,"pressure_balls":21.0,"mean_pressure":2.2072614572,"runs":30.0,"wickets":1.0,"name":"David Miller"},{"player_id":1077,"month":"2022-04","balls":168.0,"pressure_balls":52.0,"mean_pressure":1.5512569648,"runs":246.0,"wickets":3.0,"name":"David Miller"},{"player_id":1077,"month":"2022-05","balls":159.0,"pressure_balls":53.0,"mean_pressure":4.2012025791,"runs":205.0,"wickets":3.0,"name":"David Miller"},{"player_id":1077,"month":"2022-06","balls":60.0,"pressure_balls":24.0,"mean_pressure":1.3063814469,"runs":96.0,"wickets":2.0,"name":"David Miller"},{"player_id":1077,"month":"2022-07","balls":22.0,"pressure_balls":1.0,"mean_pressure":0.5765741537,"runs":30.0,"wickets":2.0,"name":"David Miller"},{"player_id":1077,"month":"2022-08","balls":22.0,"pressure_balls":0.0,"mean_pressure":0.8343407445,"runs":32.0,"wickets":0.0,"name":"David Miller"},{"player_id":1077,"month":"2022-10","balls":55.0,"pressure_balls":0.0,"mean_pressure":0.1425472238,"runs":125.0,"wickets":0.0,"name":"David Miller"},{"player_id":1077,"month":"2023-03","balls":47.0,"pressure_balls":23.0,"mean_pressure":1.5570325361,"runs":69.0,"wickets":3.0,"name":"David Miller"},{"player_id":1077,"month":"2023-04","balls":123.0,"pressure_balls":31.0,"mean_pressure":1.0938788332,"runs":180.0,"wickets":3.0,"name":"David Miller"},{"player_id":1077,"month":"2023-05","balls":61.0,"pressure_balls":7.0,"mean_pressure":0.8981363288,"runs":79.0,"wickets":5.0,"name":"David Miller"},{"player_id":1077,"month":"2023-12","balls":38.0,"pressure_balls":9.0,"mean_pressure":0.545979507,"runs":52.0,"wickets":2.0,"name":"David Miller"},{"player_id":1077,"month":"2024-03","balls":57.0,"pressure_balls":14.0,"mean_pressure":0.8876493378,"runs":77.0,"wickets":2.0,"name":"David Miller"},{"player_id":1077,"month":"2024-04","balls":58.0,"pressure_balls":5.0,"mean_pressure":0.8313046992,"runs":87.0,"wickets":3.0,"name":"David Miller"},{"player_id":1077,"month":"2024-05","balls":34.0,"pressure_balls":0.0,"mean_pressure":0.2587911918,"runs":46.0,"wickets":1.0,"name":"David Miller"},{"player_id":1077,"month":"2024-11","balls":72.0,"pressure_balls":1.0,"mean_pressure":0.3929277405,"runs":72.0,"wickets":4.0,"name":"David Miller"},{"player_id":1077,"month":"2024-12","balls":41.0,"pressure_balls":37.0,"mean_pressure":1.576874347,"runs":82.0,"wickets":1.0,"name":"David Miller"},{"player_id":1077,"month":"2025-03","balls":27.0,"pressure_balls":0.0,"mean_pressure":0.6132246234,"runs":40.0,"wickets":0.0,"name":"David Miller"},{"player_id":1077,"month":"2025-04","balls":89.0,"pressure_balls":25.0,"mean_pressure":0.974452807,"runs":102.0,"wickets":4.0,"name":"David Miller"},{"player_id":1077,"month":"2025-12","balls":29.0,"pressure_balls":8.0,"mean_pressure":0.8976717861,"runs":39.0,"wickets":2.0,"name":"David Miller"},{"player_id":1077,"month":"2026-04","balls":91.0,"pressure_balls":35.0,"mean_pressure":1.9401018478,"runs":123.0,"wickets":3.0,"name":"David Miller"},{"player_id":1077,"month":"2026-05","balls":55.0,"pressure_balls":3.0,"mean_pressure":0.1606764903,"runs":88.0,"wickets":3.0,"name":"David Miller"},{"player_id":1699,"month":"2022-02","balls":59.0,"pressure_balls":15.0,"mean_pressure":0.8578569692,"runs":107.0,"wickets":2.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2022-04","balls":199.0,"pressure_balls":14.0,"mean_pressure":0.4493245515,"runs":290.0,"wickets":6.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2022-07","balls":108.0,"pressure_balls":12.0,"mean_pressure":0.5237903913,"runs":195.0,"wickets":4.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2022-08","balls":111.0,"pressure_balls":44.0,"mean_pressure":1.036084862,"runs":197.0,"wickets":4.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2022-09","balls":139.0,"pressure_balls":52.0,"mean_pressure":1.1938428872,"runs":218.0,"wickets":6.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2022-10","balls":28.0,"pressure_balls":0.0,"mean_pressure":0.530727914,"runs":69.0,"wickets":1.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2022-11","balls":52.0,"pressure_balls":0.0,"mean_pressure":0.7879660945,"runs":111.0,"wickets":0.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2023-01","balls":169.0,"pressure_balls":19.0,"mean_pressure":0.7862936889,"runs":243.0,"wickets":3.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2023-04","balls":115.0,"pressure_balls":39.0,"mean_pressure":1.2504642424,"runs":201.0,"wickets":8.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2023-05","balls":225.0,"pressure_balls":125.0,"mean_pressure":1.8202524434,"runs":404.0,"wickets":6.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2023-08","balls":120.0,"pressure_balls":64.0,"mean_pressure":1.1304616889,"runs":166.0,"wickets":3.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2023-11","balls":87.0,"pressure_balls":39.0,"mean_pressure":1.5850628281,"runs":138.0,"wickets":3.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2023-12","balls":103.0,"pressure_balls":0.0,"mean_pressure":0.7529268343,"runs":162.0,"wickets":4.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2024-04","balls":104.0,"pressure_balls":2.0,"mean_pressure":0.5488709313,"runs":176.0,"wickets":7.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2024-05","balls":105.0,"pressure_balls":0.0,"mean_pressure":0.0466809453,"runs":169.0,"wickets":3.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2024-07","balls":49.0,"pressure_balls":11.0,"mean_pressure":0.9842846761,"runs":92.0,"wickets":3.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2024-10","balls":60.0,"pressure_balls":5.0,"mean_pressure":0.4289577866,"runs":112.0,"wickets":3.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2024-11","balls":33.0,"pressure_balls":0.0,"mean_pressure":0.8104241552,"runs":26.0,"wickets":3.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2025-01","balls":22.0,"pressure_balls":12.0,"mean_pressure":1.6180163011,"runs":26.0,"wickets":4.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2025-03","balls":65.0,"pressure_balls":12.0,"mean_pressure":0.9337359834,"runs":104.0,"wickets":2.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2025-04","balls":195.0,"pressure_balls":40.0,"mean_pressure":0.8988045072,"runs":323.0,"wickets":5.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2025-05","balls":153.0,"pressure_balls":129.0,"mean_pressure":2.0132970577,"runs":246.0,"wickets":3.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2025-06","balls":26.0,"pressure_balls":26.0,"mean_pressure":2.8691019283,"runs":44.0,"wickets":1.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2025-09","balls":71.0,"pressure_balls":5.0,"mean_pressure":0.6485763731,"runs":72.0,"wickets":4.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2025-11","balls":22.0,"pressure_balls":12.0,"mean_pressure":1.154643783,"runs":44.0,"wickets":2.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2025-12","balls":35.0,"pressure_balls":0.0,"mean_pressure":0.600910944,"runs":34.0,"wickets":4.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2026-01","balls":127.0,"pressure_balls":43.0,"mean_pressure":0.9245494175,"runs":242.0,"wickets":3.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2026-04","balls":112.0,"pressure_balls":3.0,"mean_pressure":0.5876300492,"runs":146.0,"wickets":7.0,"name":"Suryakumar Yadav"},{"player_id":1699,"month":"2026-05","balls":72.0,"pressure_balls":0.0,"mean_pressure":0.0173113482,"runs":108.0,"wickets":5.0,"name":"Suryakumar Yadav"},{"player_id":3647,"month":"2022-03","balls":29.0,"pressure_balls":0.0,"mean_pressure":0.4874774957,"runs":33.0,"wickets":1.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2022-04","balls":191.0,"pressure_balls":61.0,"mean_pressure":1.1543334624,"runs":257.0,"wickets":7.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2022-05","balls":90.0,"pressure_balls":0.0,"mean_pressure":0.2698264376,"runs":111.0,"wickets":5.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2022-06","balls":80.0,"pressure_balls":0.0,"mean_pressure":0.600946684,"runs":94.0,"wickets":4.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2022-07","balls":28.0,"pressure_balls":0.0,"mean_pressure":0.1692196255,"runs":28.0,"wickets":2.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2022-08","balls":79.0,"pressure_balls":19.0,"mean_pressure":0.5882456638,"runs":98.0,"wickets":3.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2023-12","balls":47.0,"pressure_balls":2.0,"mean_pressure":0.1776499846,"runs":61.0,"wickets":2.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2024-03","balls":26.0,"pressure_balls":0.0,"mean_pressure":0.5288377929,"runs":39.0,"wickets":1.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2024-04","balls":164.0,"pressure_balls":13.0,"mean_pressure":0.6819906058,"runs":212.0,"wickets":5.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2024-05","balls":60.0,"pressure_balls":13.0,"mean_pressure":0.8589086276,"runs":100.0,"wickets":3.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2025-03","balls":45.0,"pressure_balls":0.0,"mean_pressure":0.6691992239,"runs":97.0,"wickets":0.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2025-04","balls":148.0,"pressure_balls":46.0,"mean_pressure":0.9112975667,"runs":238.0,"wickets":7.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2025-05","balls":107.0,"pressure_balls":3.0,"mean_pressure":0.4098948232,"runs":156.0,"wickets":4.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2025-06","balls":44.0,"pressure_balls":44.0,"mean_pressure":10.9106825499,"runs":88.0,"wickets":1.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2026-04","balls":173.0,"pressure_balls":60.0,"mean_pressure":0.9625144573,"runs":291.0,"wickets":4.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2026-05","balls":122.0,"pressure_balls":38.0,"mean_pressure":1.1159311261,"runs":189.0,"wickets":4.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2026-07","balls":156.0,"pressure_balls":11.0,"mean_pressure":0.4663889525,"runs":230.0,"wickets":5.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2026-09","balls":48.0,"pressure_balls":6.0,"mean_pressure":0.3913250149,"runs":64.0,"wickets":2.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2026-10","balls":135.0,"pressure_balls":56.0,"mean_pressure":1.8395085582,"runs":235.0,"wickets":7.0,"name":"Shreyas Iyer"},{"player_id":3647,"month":"2026-11","balls":25.0,"pressure_balls":0.0,"mean_pressure":0.0,"runs":50.0,"wickets":1.0,"name":"Shreyas Iyer"},{"player_id":4260,"month":"2022-06","balls":79.0,"pressure_balls":39.0,"mean_pressure":0.9591286805,"runs":118.0,"wickets":3.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2022-07","balls":25.0,"pressure_balls":0.0,"mean_pressure":0.334980251,"runs":39.0,"wickets":2.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2022-08","balls":26.0,"pressure_balls":0.0,"mean_pressure":0.7354859607,"runs":45.0,"wickets":1.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2023-04","balls":89.0,"pressure_balls":26.0,"mean_pressure":1.1085201865,"runs":153.0,"wickets":3.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2023-05","balls":173.0,"pressure_balls":12.0,"mean_pressure":0.3311648405,"runs":295.0,"wickets":6.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2024-03","balls":78.0,"pressure_balls":14.0,"mean_pressure":1.0439854095,"runs":167.0,"wickets":2.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2024-04","balls":89.0,"pressure_balls":0.0,"mean_pressure":0.3430576105,"runs":128.0,"wickets":5.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2024-05","balls":126.0,"pressure_balls":75.0,"mean_pressure":1.9364250563,"runs":184.0,"wickets":5.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2024-11","balls":48.0,"pressure_balls":3.0,"mean_pressure":0.7226898919,"runs":68.0,"wickets":4.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2025-03","balls":52.0,"pressure_balls":0.0,"mean_pressure":0.6439628554,"runs":92.0,"wickets":2.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2025-04","balls":139.0,"pressure_balls":0.0,"mean_pressure":0.4424094319,"runs":196.0,"wickets":5.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2025-05","balls":103.0,"pressure_balls":0.0,"mean_pressure":0.029033929,"runs":199.0,"wickets":3.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2026-03","balls":22.0,"pressure_balls":0.0,"mean_pressure":0.7572058733,"runs":31.0,"wickets":1.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2026-04","balls":257.0,"pressure_balls":52.0,"mean_pressure":0.8640075093,"runs":383.0,"wickets":6.0,"name":"Heinrich Klaasen"},{"player_id":4260,"month":"2026-05","balls":134.0,"pressure_balls":33.0,"mean_pressure":0.9693888881,"runs":210.0,"wickets":6.0,"name":"Heinrich Klaasen"},{"player_id":5553,"month":"2022-01","balls":31.0,"pressure_balls":10.0,"mean_pressure":1.3062904874,"runs":60.0,"wickets":3.0,"name":"Phil Salt"},{"player_id":5553,"month":"2022-09","balls":95.0,"pressure_balls":19.0,"mean_pressure":0.7014549105,"runs":147.0,"wickets":5.0,"name":"Phil Salt"},{"player_id":5553,"month":"2023-03","balls":58.0,"pressure_balls":37.0,"mean_pressure":1.3544165147,"runs":63.0,"wickets":3.0,"name":"Phil Salt"},{"player_id":5553,"month":"2023-04","balls":39.0,"pressure_balls":0.0,"mean_pressure":0.4050255479,"runs":64.0,"wickets":3.0,"name":"Phil Salt"},{"player_id":5553,"month":"2023-05","balls":96.0,"pressure_balls":0.0,"mean_pressure":0.2834752721,"runs":154.0,"wickets":5.0,"name":"Phil Salt"},{"player_id":5553,"month":"2023-12","balls":184.0,"pressure_balls":46.0,"mean_pressure":0.9011146057,"runs":331.0,"wickets":4.0,"name":"Phil Salt"},{"player_id":5553,"month":"2024-03","balls":62.0,"pressure_balls":5.0,"mean_pressure":0.847104272,"runs":84.0,"wickets":2.0,"name":"Phil Salt"},{"player_id":5553,"month":"2024-04","balls":165.0,"pressure_balls":30.0,"mean_pressure":0.8922224072,"runs":308.0,"wickets":6.0,"name":"Phil Salt"},{"player_id":5553,"month":"2024-05","balls":58.0,"pressure_balls":14.0,"mean_pressure":0.8388752305,"runs":101.0,"wickets":5.0,"name":"Phil Salt"},{"player_id":5553,"month":"2024-09","balls":35.0,"pressure_balls":13.0,"mean_pressure":1.1977156638,"runs":59.0,"wickets":2.0,"name":"Phil Salt"},{"player_id":5553,"month":"2024-11","balls":101.0,"pressure_balls":48.0,"mean_pressure":1.4260523489,"runs":162.0,"wickets":3.0,"name":"Phil Salt"},{"player_id":5553,"month":"2025-01","balls":34.0,"pressure_balls":27.0,"mean_pressure":1.719941246,"runs":32.0,"wickets":4.0,"name":"Phil Salt"},{"player_id":5553,"month":"2025-02","balls":23.0,"pressure_balls":0.0,"mean_pressure":0.0,"runs":55.0,"wickets":1.0,"name":"Phil Salt"},{"player_id":5553,"month":"2025-03","balls":49.0,"pressure_balls":14.0,"mean_pressure":1.0198580359,"runs":88.0,"wickets":2.0,"name":"Phil Salt"},{"player_id":5553,"month":"2025-04","balls":99.0,"pressure_balls":43.0,"mean_pressure":1.2276098695,"runs":151.0,"wickets":6.0,"name":"Phil Salt"},{"player_id":5553,"month":"2025-05","balls":80.0,"pressure_balls":9.0,"mean_pressure":0.3124113892,"runs":148.0,"wickets":2.0,"name":"Phil Salt"},{"player_id":5553,"month":"2025-09","balls":139.0,"pressure_balls":43.0,"mean_pressure":0.7876608863,"runs":259.0,"wickets":3.0,"name":"Phil Salt"},{"player_id":5553,"month":"2025-10","balls":57.0,"pressure_balls":14.0,"mean_pressure":0.9124779046,"runs":85.0,"wickets":1.0,"name":"Phil Salt"},{"player_id":5553,"month":"2026-01","balls":37.0,"pressure_balls":5.0,"mean_pressure":0.6444525992,"runs":46.0,"wickets":1.0,"name":"Phil Salt"},{"player_id":5553,"month":"2026-04","balls":116.0,"pressure_balls":0.0,"mean_pressure":0.8166235925,"runs":194.0,"wickets":5.0,"name":"Phil Salt"},{"player_id":5553,"month":"2026-07","balls":100.0,"pressure_balls":12.0,"mean_pressure":0.6324398777,"runs":135.0,"wickets":3.0,"name":"Phil Salt"},{"player_id":6288,"month":"2022-04","balls":193.0,"pressure_balls":66.0,"mean_pressure":1.313335225,"runs":260.0,"wickets":8.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2022-05","balls":178.0,"pressure_balls":60.0,"mean_pressure":1.869966256,"runs":223.0,"wickets":3.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2023-01","balls":61.0,"pressure_balls":22.0,"mean_pressure":1.0744973611,"runs":76.0,"wickets":5.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2023-02","balls":65.0,"pressure_balls":18.0,"mean_pressure":0.953359609,"runs":126.0,"wickets":0.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2023-03","balls":36.0,"pressure_balls":1.0,"mean_pressure":0.9713736377,"runs":63.0,"wickets":1.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2023-04","balls":203.0,"pressure_balls":17.0,"mean_pressure":0.9234421022,"runs":270.0,"wickets":7.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2023-05","balls":343.0,"pressure_balls":119.0,"mean_pressure":1.4585901232,"runs":557.0,"wickets":7.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2023-08","balls":87.0,"pressure_balls":21.0,"mean_pressure":0.883979452,"runs":102.0,"wickets":5.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2024-03","balls":56.0,"pressure_balls":5.0,"mean_pressure":0.9976470839,"runs":75.0,"wickets":3.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2024-04","balls":173.0,"pressure_balls":31.0,"mean_pressure":1.0146876664,"runs":245.0,"wickets":6.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2024-05","balls":66.0,"pressure_balls":0.0,"mean_pressure":0.1397518292,"runs":106.0,"wickets":2.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2024-07","balls":190.0,"pressure_balls":59.0,"mean_pressure":0.8179601849,"runs":243.0,"wickets":6.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2025-03","balls":42.0,"pressure_balls":0.0,"mean_pressure":0.6871695191,"runs":71.0,"wickets":2.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2025-04","balls":217.0,"pressure_balls":54.0,"mean_pressure":0.9149172904,"runs":318.0,"wickets":5.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2025-05","balls":176.0,"pressure_balls":47.0,"mean_pressure":0.887094253,"runs":261.0,"wickets":4.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2025-09","balls":89.0,"pressure_balls":10.0,"mean_pressure":1.0301458537,"runs":127.0,"wickets":6.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2025-11","balls":54.0,"pressure_balls":19.0,"mean_pressure":1.1579044604,"runs":61.0,"wickets":2.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2025-12","balls":33.0,"pressure_balls":0.0,"mean_pressure":0.2928174339,"runs":32.0,"wickets":3.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2026-03","balls":29.0,"pressure_balls":0.0,"mean_pressure":0.8149589914,"runs":39.0,"wickets":1.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2026-04","balls":219.0,"pressure_balls":28.0,"mean_pressure":0.8694805325,"runs":334.0,"wickets":7.0,"name":"Shubman Gill"},{"player_id":6288,"month":"2026-05","balls":224.0,"pressure_balls":85.0,"mean_pressure":1.6763351391,"runs":359.0,"wickets":8.0,"name":"Shubman Gill"},{"player_id":23450,"month":"2022-04","balls":53.0,"pressure_balls":30.0,"mean_pressure":1.2293142521,"runs":66.0,"wickets":3.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2022-05","balls":65.0,"pressure_balls":0.0,"mean_pressure":0.0463397029,"runs":79.0,"wickets":1.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2023-04","balls":128.0,"pressure_balls":32.0,"mean_pressure":0.9780794748,"runs":154.0,"wickets":2.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2023-05","balls":119.0,"pressure_balls":74.0,"mean_pressure":1.3139837501,"runs":186.0,"wickets":2.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2024-03","balls":113.0,"pressure_balls":26.0,"mean_pressure":0.862135176,"runs":127.0,"wickets":3.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2024-04","balls":209.0,"pressure_balls":55.0,"mean_pressure":1.0404762601,"runs":291.0,"wickets":5.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2024-05","balls":66.0,"pressure_balls":0.0,"mean_pressure":0.2063976797,"runs":109.0,"wickets":2.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2025-03","balls":87.0,"pressure_balls":7.0,"mean_pressure":0.7285420547,"runs":137.0,"wickets":2.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2025-04","balls":235.0,"pressure_balls":75.0,"mean_pressure":1.0253525462,"runs":319.0,"wickets":7.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2025-05","balls":187.0,"pressure_balls":66.0,"mean_pressure":1.8339415468,"runs":303.0,"wickets":5.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2026-04","balls":196.0,"pressure_balls":46.0,"mean_pressure":0.9614966144,"runs":315.0,"wickets":8.0,"name":"Sai Sudharsan"},{"player_id":23450,"month":"2026-05","balls":273.0,"pressure_balls":128.0,"mean_pressure":1.5713815004,"runs":394.0,"wickets":7.0,"name":"Sai Sudharsan"},{"player_id":50284,"month":"2025-04","balls":75.0,"pressure_balls":0.0,"mean_pressure":0.1654592567,"runs":151.0,"wickets":3.0,"name":"Vaibhav Sooryavanshi"},{"player_id":50284,"month":"2025-05","balls":54.0,"pressure_balls":0.0,"mean_pressure":0.0007060038,"runs":101.0,"wickets":4.0,"name":"Vaibhav Sooryavanshi"},{"player_id":50284,"month":"2025-11","balls":102.0,"pressure_balls":27.0,"mean_pressure":0.9214375284,"runs":239.0,"wickets":4.0,"name":"Vaibhav Sooryavanshi"},{"player_id":50284,"month":"2026-04","balls":157.0,"pressure_balls":24.0,"mean_pressure":0.8976707674,"runs":348.0,"wickets":8.0,"name":"Vaibhav Sooryavanshi"},{"player_id":50284,"month":"2026-05","balls":170.0,"pressure_balls":155.0,"mean_pressure":2.9354168452,"runs":376.0,"wickets":7.0,"name":"Vaibhav Sooryavanshi"},{"player_id":50284,"month":"2026-07","balls":112.0,"pressure_balls":32.0,"mean_pressure":0.6157657496,"runs":193.0,"wickets":6.0,"name":"Vaibhav Sooryavanshi"},{"player_id":50284,"month":"2026-10","balls":27.0,"pressure_balls":8.0,"mean_pressure":1.3782324761,"runs":49.0,"wickets":2.0,"name":"Vaibhav Sooryavanshi"}],"bowler_comp":[{"component":"pulled_off_above_exp","direction":1,"n_players":108,"split_half_r":0.6807108253,"full_sample_r":0.8100272992,"pruned_for":null,"kept":true},{"component":"hp_bnd_conceded","direction":-1,"n_players":108,"split_half_r":0.5687115443,"full_sample_r":0.7250683485,"pruned_for":null,"kept":true},{"component":"extras_per_100","direction":-1,"n_players":108,"split_half_r":0.5415834455,"full_sample_r":0.7026326692,"pruned_for":null,"kept":true},{"component":"hp_dot_rate","direction":1,"n_players":108,"split_half_r":0.5065342454,"full_sample_r":0.672449693,"pruned_for":null,"kept":true},{"component":"hp_econ","direction":-1,"n_players":108,"split_half_r":0.457932329,"full_sample_r":0.6281942171,"pruned_for":"hp_bnd_conceded","kept":false},{"component":"hp_runs_above","direction":1,"n_players":108,"split_half_r":0.31756465,"full_sample_r":0.4820479208,"pruned_for":null,"kept":true},{"component":"yorker_exec","direction":1,"n_players":92,"split_half_r":0.3051553637,"full_sample_r":0.4676153846,"pruned_for":null,"kept":true},{"component":"positive_share","direction":1,"n_players":108,"split_half_r":0.2398200082,"full_sample_r":0.3868626198,"pruned_for":null,"kept":true},{"component":"hp_value_per_ball","direction":1,"n_players":108,"split_half_r":0.2058921739,"full_sample_r":0.3414769221,"pruned_for":null,"kept":true},{"component":"hp_wkt_rate","direction":1,"n_players":108,"split_half_r":0.1869232125,"full_sample_r":0.3149710285,"pruned_for":null,"kept":true},{"component":"hp_wkt_above","direction":1,"n_players":108,"split_half_r":0.153947804,"full_sample_r":0.2668193544,"pruned_for":"hp_wkt_rate","kept":false},{"component":"pressure_delta","direction":1,"n_players":108,"split_half_r":0.1075719034,"full_sample_r":0.1942481623,"pruned_for":null,"kept":true}],"batter_comp":[{"component":"hp_dot_rate","direction":-1,"n_players":109,"split_half_r":0.5175818156,"full_sample_r":0.6821138871,"pruned_for":null,"kept":true},{"component":"hp_bnd_rate","direction":1,"n_players":109,"split_half_r":0.4225023077,"full_sample_r":0.5940268855,"pruned_for":null,"kept":true},{"component":"hp_sr","direction":1,"n_players":109,"split_half_r":0.3932703629,"full_sample_r":0.5645284266,"pruned_for":"hp_bnd_rate","kept":false},{"component":"hp_runs_above","direction":1,"n_players":109,"split_half_r":0.312469051,"full_sample_r":0.4761545437,"pruned_for":null,"kept":true},{"component":"positive_share","direction":1,"n_players":109,"split_half_r":0.2308376834,"full_sample_r":0.3750903739,"pruned_for":null,"kept":true},{"component":"hp_survival","direction":1,"n_players":109,"split_half_r":0.1920783761,"full_sample_r":0.3222579656,"pruned_for":null,"kept":true},{"component":"hp_wkt_above","direction":1,"n_players":109,"split_half_r":0.1751184382,"full_sample_r":0.2980438949,"pruned_for":"hp_survival","kept":false},{"component":"endurance_slope","direction":1,"n_players":109,"split_half_r":0.0390781219,"full_sample_r":0.0752169084,"pruned_for":null,"kept":true},{"component":"hp_value_per_ball","direction":1,"n_players":109,"split_half_r":0.0375690357,"full_sample_r":0.0724174187,"pruned_for":null,"kept":true},{"component":"sr_delta","direction":1,"n_players":109,"split_half_r":0.0360883249,"full_sample_r":0.0696626418,"pruned_for":null,"kept":true},{"component":"pressure_delta","direction":1,"n_players":109,"split_half_r":-0.2349631642,"full_sample_r":-0.614253205,"pruned_for":null,"kept":true},{"component":"wpa_per_100","direction":1,"n_players":109,"split_half_r":null,"full_sample_r":null,"pruned_for":null,"kept":true}],"validation":[{"discipline":"bowler","metric":"Split-half reliability (5 independent splits)","value":0.407,"baseline":null,"p_value":null,"verdict":"reproduces"},{"discipline":"bowler","metric":"Reliability on unseen 2025 (weights from <=2024)","value":0.312,"baseline":null,"p_value":null,"verdict":"replicates"},{"discipline":"batter","metric":"Split-half reliability (5 independent splits)","value":0.269,"baseline":null,"p_value":null,"verdict":"reproduces"},{"discipline":"batter","metric":"Reliability on unseen 2025 (weights from <=2024)","value":0.179,"baseline":null,"p_value":null,"verdict":"replicates"}]};</script>
+<script>
+/* ------------------------------------------------------------------
+   Minimal reimplementation of the dashboard runtime the hosted page
+   calls. Data is embedded above, so nothing is fetched.
+   ------------------------------------------------------------------ */
+(function () {
+  const DATA = window.__DASH_DATA__;
+  const calcs = {}, loaders = {}, listeners = [], draws = {};
+  let params = {};
+
+  const colorVars = ['--c1','--c2','--c3','--c4','--c5','--c6','--c7','--c8'];
+  const dash = {
+    colors: colorVars.map(v => getComputedStyle(document.documentElement)
+      .getPropertyValue(v).trim() || null).filter(Boolean),
+    data(id) {
+      if (calcs[id]) {
+        const inputs = calcs[id].inputs.map(k => dash.data(k).data);
+        let value = null;
+        try { value = calcs[id].fn.apply(null, inputs); } catch (e) { value = null; }
+        return { status: 'ok', data: value, refreshing: false, truncated: false };
+      }
+      const rows = DATA[id];
+      if (!rows) return { status: 'missing', data: [], columns: [] };
+      return { status: 'ok', data: rows, refreshing: false, truncated: false,
+               columns: rows.length ? Object.keys(rows[0]) : [] };
+    },
+    onData(fn) { listeners.push(fn); try { fn(); } catch (e) { console.error(e); } },
+    calc(id, spec) { calcs[id] = spec; },
+    loader(id, spec) { loaders[id] = spec; },
+    params() { return Object.assign({}, params); },
+    setParams(next) { params = Object.assign({}, params, next); dash.refreshAll(); },
+    resetParams() { params = {}; dash.refreshAll(); },
+    setLink() {},
+    refresh() {},
+    draw(name, spec) {
+      if (typeof spec === 'function' || (spec && typeof spec === 'object')) {
+        draws[name] = spec;
+        runDraw(name);
+      } else {
+        runDraw(name);
+      }
+    },
+    refreshAll() {
+      listeners.forEach(fn => { try { fn(); } catch (e) { console.error(e); } });
+      Object.keys(draws).forEach(runDraw);
+    },
+  };
+
+  const mounted = new WeakMap();
+  function runDraw(name) {
+    const spec = draws[name];
+    if (!spec) return;
+    document.querySelectorAll('[data-draw="' + name + '"]').forEach(node => {
+      if (node.closest('[hidden]')) return;
+      try {
+        if (typeof spec === 'function') { spec(node); return; }
+        if (!mounted.has(node)) {
+          node.innerHTML = '';
+          mounted.set(node, spec.mount ? spec.mount(node) : undefined);
+        }
+        if (spec.update) spec.update(node, mounted.get(node));
+      } catch (err) { console.error('draw ' + name, err); }
+    });
+  }
+
+  /* marks: fill any element the page marked with data-source/data-field */
+  function applyMarks() {
+    document.querySelectorAll('[data-source][data-field]').forEach(node => {
+      if (node.dataset.drawn === '1' || node.hasAttribute('data-draw')) return;
+      const set = dash.data(node.dataset.source);
+      if (set.status !== 'ok' || !Array.isArray(set.data)) return;
+      let row = null;
+      if (node.dataset.where) {
+        const [col, val] = node.dataset.where.split('=');
+        row = set.data.find(r => String(r[decodeURIComponent(col)]) === decodeURIComponent(val));
+      } else if (node.dataset.row !== undefined) {
+        row = set.data[+node.dataset.row];
+      }
+      if (row && row[node.dataset.field] !== undefined) {
+        node.textContent = String(row[node.dataset.field]);
+        node.dataset.drawn = '1';
+      }
+    });
+  }
+
+  window.dash = dash;
+  window.addEventListener('DOMContentLoaded', () => {
+    dash.refreshAll();
+    applyMarks();
+    document.querySelectorAll('.dash-skeleton').forEach(n => n.classList.remove('dash-skeleton'));
+    /* re-run drawings when a section is unhidden by the page's own tabs */
+    new MutationObserver(() => { Object.keys(draws).forEach(runDraw); applyMarks(); })
+      .observe(document.body, { attributes: true, attributeFilter: ['hidden'], subtree: true });
+  });
+})();
+</script>
+</head><body><div id="dash-root">
+<meta name="dash-one-writer">
+<style>
+/* Layout: scoreboard column — ranking table, then what drove it, then time. */
+.pr { --ink: var(--color-fg); --mut: var(--color-fg-muted); --line: var(--color-border-line);
+      --pan: var(--color-panel); font-family: var(--font-anthropic-sans); color: var(--ink); }
+.pr h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium);
+         margin: 0 0 var(--cds-gap-xs); text-wrap: balance; }
+.pr h3 { font-size: var(--cds-font-size-body); font-weight: var(--cds-font-weight-medium);
+         margin: 0 0 2px; }
+.pr .sub { color: var(--mut); font-size: var(--cds-font-size-caption); margin: 0 0 var(--cds-gap-md); }
+.pr .lede { font-family: var(--font-anthropic-serif); font-weight: 400;
+            font-size: calc(var(--cds-font-size-heading) * 1.05); line-height: 1.35;
+            margin: 0 0 var(--cds-gap-xs); text-wrap: balance; }
+.pr .big { font-family: var(--font-anthropic-serif); font-variant-numeric: tabular-nums; }
+.pr section { margin-bottom: var(--cds-gap-xl); }
+.pr .block { margin-bottom: var(--cds-gap-lg); }
+.pr .card { background: var(--pan); border: 1px solid var(--line);
+            border-radius: var(--cds-radius); padding: var(--cds-pad-lg); }
+.pr .bar-row { display: grid; grid-template-columns: minmax(96px, 150px) 1fr;
+               gap: var(--cds-gap-sm); align-items: center; margin-bottom: 6px; }
+.pr .bar-name { font-size: var(--cds-font-size-caption); min-width: 0;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--cds-gap-md); }
+.pr .tab { font: inherit; font-size: var(--cds-font-size-caption); cursor: pointer;
+           padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line);
+           background: transparent; color: var(--mut); }
+.pr .tab[aria-pressed="true"] { background: var(--ink); color: var(--color-bg); border-color: var(--ink); }
+.pr .tab:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.pr .tabs-group { display: flex; flex-wrap: wrap; gap: var(--cds-gap-md);
+                  align-items: center; margin-bottom: var(--cds-gap-lg); }
+.pr .grp-label { font-size: var(--cds-font-size-caption); color: var(--mut);
+                 letter-spacing: .04em; text-transform: uppercase; margin-right: 2px; }
+.pr table { width: 100%; border-collapse: collapse; font-size: var(--cds-font-size-caption);
+            font-variant-numeric: tabular-nums; }
+.pr th, .pr td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+.pr th:nth-child(1), .pr td:nth-child(1), .pr th:nth-child(2), .pr td:nth-child(2) { text-align: left; }
+.pr th { color: var(--mut); font-weight: var(--cds-font-weight-medium); white-space: nowrap; }
+.pr .tw { overflow-x: auto; }
+.pr .chart { position: relative; min-height: 210px; }
+.pr .chart svg { display: block; width: 100%; height: auto; }
+.pr .chart text { font-family: var(--font-anthropic-sans); }
+.pr .ax text { fill: var(--cds-text-secondary); font-size: 10px; }
+.pr .ax line, .pr .ax path { stroke: var(--cds-chart-axis); }
+.pr .grid line { stroke: var(--cds-chart-grid); }
+.pr .tip { position: absolute; pointer-events: none; opacity: 0; transition: opacity .12s;
+           background: var(--cds-surface-popover); border: 1px solid var(--cds-border);
+           box-shadow: var(--cds-shadow-popover); border-radius: var(--cds-radius);
+           padding: 6px 9px; font-size: var(--cds-font-size-caption); max-width: 220px; z-index: 5; }
+.pr .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: var(--cds-gap-sm);
+              font-size: var(--cds-font-size-caption); color: var(--mut); }
+.pr .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+.pr .note { font-size: var(--cds-font-size-caption); color: var(--mut); margin: var(--cds-gap-sm) 0 0; }
+.pr .warn { border-left: 2px solid var(--color-warn); padding-left: var(--cds-pad-sm); }
+.pr details { font-size: var(--cds-font-size-caption); color: var(--mut); margin-top: var(--cds-gap-md); }
+.pr summary { cursor: pointer; color: var(--ink); }
+.pr .pill { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 999px;
+            border: 1px solid var(--line); color: var(--mut); }
+.pr .pill-bad { color: var(--color-bad); border-color: var(--color-bad); }
+.pr .pill-ok { color: var(--color-ok); border-color: var(--color-ok); }
+.pr .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: var(--cds-gap-md); margin-bottom: var(--cds-gap-lg); }
+.pr .kpi-v { font-size: calc(var(--cds-font-size-title) * .8); display: block; }
+.pr .kpi-l { font-size: var(--cds-font-size-caption); color: var(--mut); }
+</style>
+
+<div class="pr">
+
+  <p class="lede">Which T20 players actually hold up when the match is on the line —
+    and how confident we can be about each name.</p>
+  <p class="sub">Fitted on 2022&ndash;2025 ball-by-ball data (IPL and T20I), with 2026 held back to test it.
+    <span data-draw="meta-balls">&mdash;</span></p>
+
+  <div class="tabs-group">
+    <span class="grp-label">Read as</span>
+    <div class="tabs" id="view-tabs">
+      <button class="tab" id="tab-plain" type="button" aria-pressed="true" data-view="plain">Plain English</button>
+      <button class="tab" id="tab-tech" type="button" aria-pressed="false" data-view="tech">Technical</button>
+    </div>
+    <span class="grp-label">Showing</span>
+    <div class="tabs" id="disc-tabs">
+      <button class="tab" id="tab-bowler" type="button" aria-pressed="true" data-disc="bowler">Bowlers</button>
+      <button class="tab" id="tab-batter" type="button" aria-pressed="false" data-disc="batter">Batters</button>
+    </div>
+  </div>
+
+  <!-- ============================= PLAIN ENGLISH ============================= -->
+  <section id="plain">
+
+    <div class="card block">
+      <h3>What this measures, in one paragraph</h3>
+      <p class="note">Not every ball matters equally. A six when 60 are needed off 24 barely changes who
+        wins; the same six when 10 are needed off 12 almost settles it. This model scores every delivery
+        by how much it could swing the result, and by how much the match itself mattered in the
+        tournament. A player's score is what they did on the balls that mattered, compared with what a
+        typical player does in exactly that situation, against that quality of opposition.</p>
+    </div>
+
+    <div class="kpis">
+      <div class="card"><span class="big kpi-v" data-draw="kpi-leader">&mdash;</span>
+        <span class="kpi-l">Top of the list</span></div>
+      <div class="card"><span class="big kpi-v" data-draw="kpi-conf">&mdash;</span>
+        <span class="kpi-l">Their chance of being a genuine top-10 pick</span></div>
+      <div class="card"><span class="big kpi-v" data-draw="kpi-safe">&mdash;</span>
+        <span class="kpi-l">Names we can call reliable (out of 10)</span></div>
+    </div>
+
+    <div class="block">
+      <h2 id="plain-top10">The top 10 under pressure</h2>
+      <p class="sub">Sorted by pressure score. The last column is the honest one: how often this player
+        lands in the top 10 when we re-run the whole thing on resampled matches.</p>
+
+      <div class="tw" id="wrap-rank-bowler">
+        <table data-source="bowler_rank" data-row-key="name">
+          <thead><tr>
+            <th data-field="rank">#</th><th data-field="name">Bowler</th>
+            <th data-field="rating_rw">Pressure score</th>
+            <th data-field="hp_balls">Pressure balls</th>
+            <th data-field="p_top10_uncond">Chance of being a real top-10</th>
+          </tr></thead>
+          <tbody data-draw="rank-bowler"></tbody>
+        </table>
+      </div>
+      <div class="tw" id="wrap-rank-batter" hidden>
+        <table data-source="batter_rank" data-row-key="name">
+          <thead><tr>
+            <th data-field="rank">#</th><th data-field="name">Batter</th>
+            <th data-field="rating_rw">Pressure score</th>
+            <th data-field="hp_balls">Pressure balls</th>
+            <th data-field="p_top10_uncond">Chance of being a real top-10</th>
+          </tr></thead>
+          <tbody data-draw="rank-batter"></tbody>
+        </table>
+      </div>
+      <p class="note warn" data-draw="rank-caveat">&mdash;</p>
+    </div>
+
+    <div class="block">
+      <h2 id="plain-why">What put them there</h2>
+      <p class="sub">Each bar breaks a player's score into the things they actually did well. Longer
+        segment, bigger share of why they are on this list.</p>
+      <div class="chart" id="contrib-bowler" data-source="bowler_contrib" data-draw="contrib-bowler"></div>
+      <div class="chart" id="contrib-batter" data-source="batter_contrib" data-draw="contrib-batter" hidden></div>
+      <p class="note" data-draw="contrib-lede">&mdash;</p>
+    </div>
+
+    <div class="block">
+      <h2 id="plain-year">Season by season</h2>
+      <p class="sub">Pressure score per year for the current top 10. Lines jump around a lot, which is
+        the point: one season is a small sample, and almost nobody repeats.</p>
+      <div class="chart" id="year-bowler" data-source="bowler_year" data-draw="year-bowler"></div>
+      <div class="chart" id="year-batter" data-source="batter_year" data-draw="year-batter" hidden></div>
+    </div>
+
+    <div class="block">
+      <h2 id="plain-format">League cricket vs international</h2>
+      <p class="sub">The same players scored separately in franchise T20 and in T20Is. A big gap means a
+        record built mostly in one setting.</p>
+      <div class="chart" id="fmt-bowler" data-source="bowler_fmt" data-draw="fmt-bowler"></div>
+      <div class="chart" id="fmt-batter" data-source="batter_fmt" data-draw="fmt-batter" hidden></div>
+    </div>
+
+    <details>
+      <summary>How to read the numbers</summary>
+      <p><b>Pressure score</b> &mdash; a standardised score. 0 is an average eligible player; 1.0 is
+      roughly one standard deviation better. It is not runs or wickets.</p>
+      <p><b>Pressure balls</b> &mdash; deliveries in the top quarter of match-importance. A player needs
+      at least 120 of them to be eligible.</p>
+      <p><b>Chance of being a real top-10</b> &mdash; we re-ran the whole ranking on 1000 resamples of
+      the matches. This is the share of those runs in which the player made the top 10 and cleared the
+      minimum-balls bar. Below about 50%, treat the placing as unproven.</p>
+    </details>
+  </section>
+
+  <!-- ============================== TECHNICAL ============================== -->
+  <section id="technical" hidden>
+
+    <div class="card block">
+      <h3>Construction</h3>
+      <p class="note">pressure(ball) = leverage(game state) &times; [(1&minus;&lambda;) + &lambda;&middot;stakes(match)]
+        &times; momentum, normalised to mean 1. Leverage is the expected absolute win-probability swing of
+        one delivery under the league-average outcome mix. Stakes are
+        P(qualify | win) &minus; P(qualify | lose), by exact convolution over the points table.
+        Ball value = (expected runs &minus; conceded) + w&middot;(wicket &minus; E[wicket]), where the
+        expectation models see only the <i>opponent's</i> quality, never the rated player's. Composite
+        weights are each component's measured split-half reliability. Every constant is estimated:
+        &lambda; <span data-draw="meta-lam">&mdash;</span>,
+        wicket run-value <span data-draw="meta-wkt">&mdash;</span> runs,
+        shrinkage k by empirical Bayes.</p>
+    </div>
+
+    <div class="block">
+      <h2 id="tech-valid">Out-of-sample validation</h2>
+      <p class="sub">Weights derived on &le;2024, reliability measured on unseen 2025; selection tested
+        on held-out 2026 with 10,000-shuffle permutation tests, Benjamini&ndash;Hochberg corrected.</p>
+      <div class="tw">
+        <table data-source="validation" data-row-key="discipline,metric">
+          <thead><tr>
+            <th data-field="discipline">Discipline</th><th data-field="metric">Test</th>
+            <th data-field="value">Value</th><th data-field="baseline">Baseline</th>
+            <th data-field="p_value">p (BH)</th><th data-field="verdict">Verdict</th>
+          </tr></thead>
+          <tbody data-draw="valid-table"></tbody>
+        </table>
+      </div>
+      <p class="note warn">The bowler reliability gain replicates on data the weights never saw. The
+        batter reliability gain does not. No selection result survives multiplicity correction, so the
+        rankings are a measurement, not a demonstrated forecast.</p>
+    </div>
+
+    <div class="block">
+      <h2 id="tech-rel">Component reliability and derived weights</h2>
+      <p class="sub">Split-half r per candidate component, measured on training matches only. Components
+        at or below 0.05, and those redundant with a more reliable one, get zero weight.</p>
+      <div class="tw" id="wrap-comp-bowler">
+        <table data-source="bowler_comp" data-row-key="component">
+          <thead><tr>
+            <th data-field="component">Component</th><th data-field="direction">Dir</th>
+            <th data-field="split_half_r">Split-half r</th>
+            <th data-field="full_sample_r">Spearman&ndash;Brown</th>
+            <th data-field="kept">Kept</th>
+          </tr></thead>
+          <tbody data-draw="comp-bowler"></tbody>
+        </table>
+      </div>
+      <div class="tw" id="wrap-comp-batter" hidden>
+        <table data-source="batter_comp" data-row-key="component">
+          <thead><tr>
+            <th data-field="component">Component</th><th data-field="direction">Dir</th>
+            <th data-field="split_half_r">Split-half r</th>
+            <th data-field="full_sample_r">Spearman&ndash;Brown</th>
+            <th data-field="kept">Kept</th>
+          </tr></thead>
+          <tbody data-draw="comp-batter"></tbody>
+        </table>
+      </div>
+      <p class="note" data-draw="comp-note">&mdash;</p>
+    </div>
+
+    <div class="block">
+      <h2 id="tech-ci">Rank uncertainty</h2>
+      <p class="sub">90% rank intervals from 1000 match-level bootstraps. Matches are resampled, not
+        deliveries: balls within a match share pitch, conditions and opponents.</p>
+      <div class="chart" id="ci-bowler" data-source="bowler_rank" data-draw="ci-bowler"></div>
+      <div class="chart" id="ci-batter" data-source="batter_rank" data-draw="ci-batter" hidden></div>
+      <p class="note" data-draw="ci-note">&mdash;</p>
+    </div>
+
+    <div class="block">
+      <h2 id="tech-contrib">Full component decomposition</h2>
+      <p class="sub">Signed contribution (weight &times; z-score) per component for the top 10, including
+        the terms that drag a player down.</p>
+      <div class="chart" id="dec-bowler" data-source="bowler_contrib" data-draw="dec-bowler"></div>
+      <div class="chart" id="dec-batter" data-source="batter_contrib" data-draw="dec-batter" hidden></div>
+    </div>
+
+    <div class="block">
+      <h2 id="tech-month">Monthly pressure exposure</h2>
+      <p class="sub">Mean pressure weight and pressure-ball count by month for the top 10, pooled.
+        Shows when in the calendar these records were built.</p>
+      <div class="chart" id="mon-bowler" data-source="bowler_month" data-draw="mon-bowler"></div>
+      <div class="chart" id="mon-batter" data-source="batter_month" data-draw="mon-batter" hidden></div>
+    </div>
+
+    <details>
+      <summary>Known limitations</summary>
+      <p>First-innings win probability is weak (powerplay AUC 0.563 on holdout), and the innings-1
+      powerplay still supplies about 23% of high-pressure balls against a 15.8% base rate, so that phase
+      is over-weighted relative to how well it is measured.</p>
+      <p>Per-ball expectation R&sup2; is 0.014&ndash;0.019: a single T20 delivery is close to
+      irreducible, which caps every per-ball value metric's reliability.</p>
+      <p>The batter composite tilts toward middle-order finishers (median batting position 5 vs 3 for the
+      rest of the field; 37.6% vs 18.5% of pressure balls at the death), so it may partly measure role
+      rather than temperament.</p>
+      <p>Season lists are descriptive. No player managed more than two top-10 finishes in five seasons.</p>
+    </details>
+  </section>
+</div>
+
+<script>
+window.PR = (function () {
+  var LAB = {
+    pulled_off_above_exp: 'Dots & wickets above par', hp_bnd_conceded: 'Boundaries conceded',
+    hp_dot_rate_bowl: 'Dot-ball rate', extras_per_100: 'Wides & no-balls',
+    hp_runs_above: 'Runs saved vs expected', positive_share: 'Match-to-match consistency',
+    hp_value_per_ball: 'Overall value per ball', yorker_exec: 'Yorker execution',
+    hp_wkt_above: 'Wickets above expected', pressure_delta: 'Rises under pressure',
+    hp_econ: 'Economy', hp_wkt_rate: 'Wicket rate',
+    hp_bnd_rate: 'Boundary rate', hp_dot_rate: 'Dot balls (fewer is better)',
+    sr_delta: 'Strike-rate lift under pressure', endurance_slope: 'Holds up in a long innings',
+    hp_sr: 'Strike rate', hp_survival: 'Survival', wpa_per_100: 'Win probability added'
+  };
+  function label(k, kind) {
+    if (k === 'hp_dot_rate' && kind === 'bowler') return LAB.hp_dot_rate_bowl;
+    return LAB[k] || k.replace(/_/g, ' ');
+  }
+  function num(v) { var n = +v; return isFinite(n) ? n : null; }
+  function pct(v) { var n = num(v); return n == null ? '—' : Math.round(n * 100) + '%'; }
+  function f2(v) { var n = num(v); return n == null ? '—' : n.toFixed(2); }
+  function rows(id) { var d = dash.data(id); return d.status === 'ok' ? d.data : []; }
+  function ok(id) { return dash.data(id).status === 'ok'; }
+  function state(id) { return dash.data(id).status; }
+  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  function dash_(el) { clear(el); el.appendChild(document.createTextNode('—')); }
+  function fail(el, st) {
+    clear(el);
+    var p = document.createElement('p');
+    p.className = 'note';
+    p.textContent = st === 'error' ? 'Failed to load' : '—';
+    el.appendChild(p);
+  }
+  function svg(el, h) {
+    clear(el);
+    var w = Math.max(el.clientWidth || 320, 240);
+    var s = d3.select(el).append('svg')
+      .attr('viewBox', '0 0 ' + w + ' ' + h)
+      .attr('width', '100%').attr('role', 'img');
+    return { s: s, w: w, h: h };
+  }
+  function tip(el) {
+    var t = document.createElement('div');
+    t.className = 'tip';
+    el.appendChild(t);
+    return {
+      show: function (x, y, html) {
+        t.textContent = '';
+        html.forEach(function (line, i) {
+          if (i) t.appendChild(document.createElement('br'));
+          t.appendChild(document.createTextNode(line));
+        });
+        var bw = el.clientWidth || 320;
+        t.style.opacity = 1;
+        t.style.left = Math.min(Math.max(x + 10, 4), Math.max(bw - 180, 4)) + 'px';
+        t.style.top = (y + 10) + 'px';
+      },
+      hide: function () { t.style.opacity = 0; }
+    };
+  }
+  function legend(el, items) {
+    var g = document.createElement('div');
+    g.className = 'legend';
+    items.forEach(function (it) {
+      var s = document.createElement('span');
+      var i = document.createElement('i');
+      i.style.background = it.c;
+      s.appendChild(i);
+      s.appendChild(document.createTextNode(it.t));
+      g.appendChild(s);
+    });
+    el.appendChild(g);
+  }
+  /* Width of the widest label as actually drawn. getComputedTextLength() is 0
+     until the text is in the document, so measure in a throwaway group. */
+  function labelWidth(s, names, cap) {
+    var g = s.append('g').attr('class', 'ax').attr('visibility', 'hidden');
+    var max = 0;
+    names.forEach(function (n) {
+      var t = g.append('text').attr('font-size', 10).text(String(n));
+      var w = 0;
+      try { w = t.node().getComputedTextLength(); } catch (e) { w = String(n).length * 5.6; }
+      if (w > max) max = w;
+    });
+    g.remove();
+    return Math.min(max, cap);
+  }
+  function shorten(name, px) {
+    var maxChars = Math.max(Math.floor(px / 5.9), 6);
+    var s0 = String(name);
+    return s0.length <= maxChars ? s0 : s0.slice(0, maxChars - 1) + '\u2026';
+  }
+  return { label: label, num: num, pct: pct, f2: f2, rows: rows, ok: ok, state: state,
+           clear: clear, dash_: dash_, fail: fail, svg: svg, tip: tip, legend: legend,
+           labelWidth: labelWidth, shorten: shorten };
+})();
+</script>
+
+<script>
+(function () {
+  var P = window.PR;
+
+  /* ---------- the two toggles ---------- */
+  var view = 'plain', disc = 'bowler';
+  var PAIRS = [
+    ['wrap-rank-', null], ['contrib-', 'contrib-'], ['year-', 'year-'], ['fmt-', 'fmt-'],
+    ['wrap-comp-', null], ['ci-', 'ci-'], ['dec-', 'dec-'], ['mon-', 'mon-']
+  ];
+  function apply() {
+    var pl = document.getElementById('plain'), te = document.getElementById('technical');
+    if (pl) pl.hidden = view !== 'plain';
+    if (te) te.hidden = view !== 'tech';
+    var other = disc === 'bowler' ? 'batter' : 'bowler';
+    PAIRS.forEach(function (pr) {
+      var on = document.getElementById(pr[0] + disc), off = document.getElementById(pr[0] + other);
+      if (on) on.hidden = false;
+      if (off) off.hidden = true;
+    });
+    document.querySelectorAll('#view-tabs .tab').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.view === view));
+    });
+    document.querySelectorAll('#disc-tabs .tab').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.disc === disc));
+    });
+    dash.setLink(view === 'plain' ? 'plain-top10' : 'tech-valid');
+    PAIRS.forEach(function (pr) { if (pr[1]) dash.draw(pr[1] + disc); });
+    ['rank-' + disc, 'comp-' + disc, 'kpi-leader', 'kpi-conf', 'kpi-safe',
+     'rank-caveat', 'contrib-lede', 'ci-note', 'comp-note'].forEach(function (n) { dash.draw(n); });
+  }
+  document.querySelectorAll('#view-tabs .tab').forEach(function (b) {
+    b.addEventListener('click', function () { view = b.dataset.view; apply(); });
+  });
+  document.querySelectorAll('#disc-tabs .tab').forEach(function (b) {
+    b.addEventListener('click', function () { disc = b.dataset.disc; apply(); });
+  });
+  window.PRstate = function () { return { view: view, disc: disc }; };
+  apply();
+
+  /* ---------- header ---------- */
+  dash.draw('meta-balls', function (el) {
+    var b = P.rows('bowler_rank').length, t = P.rows('batter_rank').length;
+    P.clear(el);
+    el.appendChild(document.createTextNode(
+      b && t ? b + ' bowlers and ' + t + ' batters cleared the eligibility floor.' : '—'));
+  });
+  dash.draw('meta-lam', function (el) { P.clear(el); el.appendChild(document.createTextNode('0.75')); });
+  dash.draw('meta-wkt', function (el) { P.clear(el); el.appendChild(document.createTextNode('7.53')); });
+
+  function src() { return window.PRstate().disc === 'bowler' ? 'bowler_rank' : 'batter_rank'; }
+
+  dash.draw('kpi-leader', function (el) {
+    var r = P.rows(src());
+    P.clear(el);
+    el.appendChild(document.createTextNode(r.length ? r[0].name : '—'));
+  });
+  dash.draw('kpi-conf', function (el) {
+    var r = P.rows(src());
+    P.clear(el);
+    el.appendChild(document.createTextNode(r.length ? P.pct(r[0].p_top10_uncond) : '—'));
+  });
+  dash.draw('kpi-safe', function (el) {
+    var r = P.rows(src()).slice(0, 10);
+    var n = r.filter(function (x) { return P.num(x.p_top10_uncond) >= 0.5; }).length;
+    P.clear(el);
+    el.appendChild(document.createTextNode(r.length ? String(n) : '—'));
+  });
+  dash.draw('rank-caveat', function (el) {
+    var r = P.rows(src()).slice(0, 10);
+    P.clear(el);
+    if (!r.length) { el.appendChild(document.createTextNode('—')); return; }
+    var weak = r.filter(function (x) { return P.num(x.p_top10_uncond) < 0.5; }).length;
+    var widths = r.map(function (x) { return P.num(x.rank_hi) - P.num(x.rank_lo); })
+                  .filter(function (v) { return v != null && isFinite(v); }).sort(d3.ascending);
+    var med = widths.length ? d3.quantile(widths, 0.5) : null;
+    el.appendChild(document.createTextNode(
+      weak + ' of these 10 fall below a 50% chance of being a genuine top-10 pick, and the typical '
+      + '90% rank interval spans about ' + (med == null ? '—' : Math.round(med))
+      + ' places. Read this as a shortlist, not a 1-to-10 order.'));
+  });
+
+  /* ---------- ranking tables ---------- */
+  function rankTable(kind) {
+    return function (el) {
+      var id = kind + '_rank';
+      if (!P.ok(id)) { P.clear(el); return; }
+      var data = P.rows(id).slice(0, 10);
+      P.clear(el);
+      data.forEach(function (r) {
+        var tr = document.createElement('tr');
+        [['rank', r.rank], ['name', r.name], ['rating_rw', P.f2(r.rating_rw)],
+         ['hp_balls', Math.round(P.num(r.hp_balls) || 0)],
+         ['p_top10_uncond', P.pct(r.p_top10_uncond)]].forEach(function (c, i) {
+          var td = document.createElement('td');
+          if (i === 4) {
+            var sp = document.createElement('span');
+            var v = P.num(r.p_top10_uncond);
+            sp.className = 'pill ' + (v >= 0.5 ? 'pill-ok' : 'pill-bad');
+            sp.textContent = c[1];
+            td.appendChild(sp);
+          } else {
+            td.textContent = String(c[1]);
+          }
+          tr.appendChild(td);
+        });
+        el.appendChild(tr);
+      });
+    };
+  }
+  dash.draw('rank-bowler', rankTable('bowler'));
+  dash.draw('rank-batter', rankTable('batter'));
+
+  /* ---------- contributions: plain (positive only, stacked) ---------- */
+  function contribPlain(kind) {
+    return function (el) {
+      var id = kind + '_contrib';
+      var st = P.state(id);
+      if (st !== 'ok') { P.fail(el, st); return; }
+      var data = P.rows(id);
+      if (!data.length) { P.fail(el, 'empty'); return; }
+      var keys = Object.keys(data[0]).filter(function (k) {
+        return k !== 'player_id' && k !== 'name';
+      });
+      var totals = keys.map(function (k) {
+        return { k: k, v: d3.sum(data, function (r) { return Math.max(P.num(r[k]) || 0, 0); }) };
+      }).sort(function (a, b) { return b.v - a.v; });
+      var top = totals.slice(0, 5).map(function (t) { return t.k; });
+      var col = {};
+      top.forEach(function (k, i) { col[k] = dash.colors[i % dash.colors.length]; });
+
+      var prepped = data.map(function (r) {
+        var parts = top.map(function (k) { return { k: k, v: Math.max(P.num(r[k]) || 0, 0) }; });
+        return { name: r.name, parts: parts, sum: d3.sum(parts, function (p) { return p.v; }) };
+      });
+      var max = d3.max(prepped, function (p) { return p.sum; }) || 1;
+
+      P.clear(el);
+      var t = P.tip(el);
+      prepped.forEach(function (p) {
+        var row = document.createElement('div');
+        row.className = 'bar-row';
+        var nm = document.createElement('div');
+        nm.className = 'bar-name';
+        nm.textContent = p.name;
+        row.appendChild(nm);
+        var track = document.createElement('div');
+        track.style.display = 'flex';
+        track.style.height = '16px';
+        track.style.borderRadius = '3px';
+        track.style.overflow = 'hidden';
+        track.style.minWidth = '0';
+        p.parts.forEach(function (part) {
+          if (part.v <= 0) return;
+          var seg = document.createElement('div');
+          seg.style.width = (part.v / max * 100) + '%';
+          seg.style.background = col[part.k];
+          seg.addEventListener('mousemove', function (ev) {
+            var b = el.getBoundingClientRect();
+            t.show(ev.clientX - b.left, ev.clientY - b.top,
+                   [p.name, P.label(part.k, kind) + ': +' + part.v.toFixed(2)]);
+          });
+          seg.addEventListener('mouseleave', t.hide);
+          track.appendChild(seg);
+        });
+        row.appendChild(track);
+        el.appendChild(row);
+      });
+      P.legend(el, top.map(function (k) { return { c: col[k], t: P.label(k, kind) }; }));
+    };
+  }
+  dash.draw('contrib-bowler', contribPlain('bowler'));
+  dash.draw('contrib-batter', contribPlain('batter'));
+
+  dash.draw('contrib-lede', function (el) {
+    var kind = window.PRstate().disc, id = kind + '_contrib';
+    P.clear(el);
+    if (!P.ok(id)) { el.appendChild(document.createTextNode('—')); return; }
+    var data = P.rows(id);
+    if (!data.length) { el.appendChild(document.createTextNode('—')); return; }
+    var keys = Object.keys(data[0]).filter(function (k) { return k !== 'player_id' && k !== 'name'; });
+    var best = keys.map(function (k) {
+      return { k: k, v: d3.sum(data, function (r) { return Math.max(P.num(r[k]) || 0, 0); }) };
+    }).sort(function (a, b) { return b.v - a.v; })[0];
+    el.appendChild(document.createTextNode(
+      'Across this top 10 the single biggest driver is ' + P.label(best.k, kind).toLowerCase()
+      + '. Hover any segment for the exact contribution.'));
+  });
+
+  /* ---------- season lines ---------- */
+  function yearChart(kind) {
+    return function (el) {
+      var id = kind + '_year';
+      var st = P.state(id);
+      if (st !== 'ok') { P.fail(el, st); return; }
+      var data = P.rows(id).map(function (r) {
+        return { name: r.name, year: P.num(r.year), v: P.num(r.rating_rw) };
+      }).filter(function (r) { return r.year != null && r.v != null; });
+      if (!data.length) { P.fail(el, 'empty'); return; }
+
+      var c = P.svg(el, 260), s = c.s;
+      s.attr('aria-label', 'Pressure score by season for the top 10 ' + kind + 's');
+      var m = { t: 10, r: 14, b: 26, l: 38 };
+      var years = Array.from(new Set(data.map(function (d) { return d.year; }))).sort(d3.ascending);
+      var x = d3.scalePoint().domain(years).range([m.l, c.w - m.r]).padding(0.35);
+      var y = d3.scaleLinear().domain(d3.extent(data, function (d) { return d.v; })).nice()
+                .range([c.h - m.b, m.t]);
+      s.append('g').attr('class', 'grid').selectAll('line').data(y.ticks(4)).join('line')
+        .attr('x1', m.l).attr('x2', c.w - m.r).attr('y1', y).attr('y2', y);
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(0,' + (c.h - m.b) + ')')
+        .call(d3.axisBottom(x).tickFormat(d3.format('d')));
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(' + m.l + ',0)')
+        .call(d3.axisLeft(y).ticks(4));
+      s.append('line').attr('x1', m.l).attr('x2', c.w - m.r).attr('y1', y(0)).attr('y2', y(0))
+        .attr('stroke', 'var(--cds-chart-reference)');
+
+      var byP = d3.groups(data, function (d) { return d.name; });
+      var t = P.tip(el);
+      byP.forEach(function (g, i) {
+        var pts = g[1].sort(function (a, b) { return a.year - b.year; });
+        var cc = dash.colors[i % dash.colors.length];
+        s.append('path').datum(pts).attr('fill', 'none').style('stroke', cc)
+          .attr('stroke-width', 1.6)
+          .attr('d', d3.line().x(function (d) { return x(d.year); }).y(function (d) { return y(d.v); }));
+        s.selectAll(null).data(pts).join('circle')
+          .attr('cx', function (d) { return x(d.year); }).attr('cy', function (d) { return y(d.v); })
+          .attr('r', 3).style('fill', cc)
+          .on('mousemove', function (ev, d) {
+            var b = el.getBoundingClientRect();
+            t.show(ev.clientX - b.left, ev.clientY - b.top,
+                   [d.name, d.year + ': ' + d.v.toFixed(2)]);
+          })
+          .on('mouseleave', t.hide);
+      });
+      P.legend(el, byP.map(function (g, i) {
+        return { c: dash.colors[i % dash.colors.length], t: g[0] };
+      }));
+    };
+  }
+  dash.draw('year-bowler', yearChart('bowler'));
+  dash.draw('year-batter', yearChart('batter'));
+
+  /* ---------- format comparison ---------- */
+  function fmtChart(kind) {
+    return function (el) {
+      var id = kind + '_fmt';
+      var st = P.state(id);
+      if (st !== 'ok') { P.fail(el, st); return; }
+      var data = P.rows(id);
+      if (!data.length) { P.fail(el, 'empty'); return; }
+      var byP = d3.groups(data, function (d) { return d.name; });
+      var fmts = Array.from(new Set(data.map(function (d) { return d.format; }))).sort();
+      var c = P.svg(el, Math.max(byP.length * 26 + 44, 160)), s = c.s;
+      s.attr('aria-label', 'Pressure score by format');
+      var cap = Math.max(c.w * 0.42, 70);
+      var lw = P.labelWidth(s, byP.map(function (g) { return g[0]; }), cap);
+      var m = { t: 8, r: 16, b: 26, l: Math.ceil(lw) + 12 };
+      var vals = data.map(function (d) { return P.num(d.rating_rw); })
+                     .filter(function (v) { return v != null; });
+      var x = d3.scaleLinear().domain(d3.extent(vals)).nice().range([m.l, c.w - m.r]);
+      var y = d3.scaleBand().domain(byP.map(function (g) { return g[0]; }))
+                .range([m.t, c.h - m.b]).padding(0.25);
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(0,' + (c.h - m.b) + ')')
+        .call(d3.axisBottom(x).ticks(4));
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(' + m.l + ',0)')
+        .call(d3.axisLeft(y).tickSize(0).tickFormat(function (d) { return P.shorten(d, lw); }));
+      s.append('line').attr('y1', m.t).attr('y2', c.h - m.b).attr('x1', x(0)).attr('x2', x(0))
+        .attr('stroke', 'var(--cds-chart-reference)');
+      var t = P.tip(el);
+      byP.forEach(function (g) {
+        var yy = y(g[0]) + y.bandwidth() / 2;
+        var xs = g[1].map(function (d) { return x(P.num(d.rating_rw)); });
+        if (xs.length > 1) {
+          s.append('line').attr('x1', d3.min(xs)).attr('x2', d3.max(xs))
+            .attr('y1', yy).attr('y2', yy).attr('stroke', 'var(--cds-chart-muted)')
+            .attr('stroke-width', 1.5);
+        }
+        g[1].forEach(function (d) {
+          var ci = fmts.indexOf(d.format);
+          s.append('circle').attr('cx', x(P.num(d.rating_rw))).attr('cy', yy).attr('r', 4.5)
+            .style('fill', dash.colors[ci % dash.colors.length])
+            .on('mousemove', function (ev) {
+              var b = el.getBoundingClientRect();
+              t.show(ev.clientX - b.left, ev.clientY - b.top,
+                     [d.name, d.format + ': ' + P.f2(d.rating_rw),
+                      Math.round(P.num(d.hp_balls) || 0) + ' pressure balls']);
+            })
+            .on('mouseleave', t.hide);
+        });
+      });
+      P.legend(el, fmts.map(function (f, i) {
+        return { c: dash.colors[i % dash.colors.length], t: f };
+      }));
+    };
+  }
+  dash.draw('fmt-bowler', fmtChart('bowler'));
+  dash.draw('fmt-batter', fmtChart('batter'));
+})();
+</script>
+
+<script>
+(function () {
+  var P = window.PR;
+
+  /* ---------- validation table ---------- */
+  dash.draw('valid-table', function (el) {
+    if (!P.ok('validation')) { P.clear(el); return; }
+    P.clear(el);
+    P.rows('validation').forEach(function (r) {
+      var tr = document.createElement('tr');
+      [r.discipline, r.metric, r.value === '' || r.value == null ? '—' : P.f2(r.value),
+       r.baseline === '' || r.baseline == null ? '—' : P.f2(r.baseline),
+       r.p_value === '' || r.p_value == null ? '—' : P.num(r.p_value).toFixed(4)]
+        .forEach(function (v) {
+          var td = document.createElement('td');
+          td.textContent = String(v);
+          tr.appendChild(td);
+        });
+      var td = document.createElement('td');
+      var sp = document.createElement('span');
+      var good = /replicates|^significant/.test(String(r.verdict));
+      sp.className = 'pill ' + (good ? 'pill-ok' : 'pill-bad');
+      sp.textContent = String(r.verdict);
+      td.appendChild(sp);
+      tr.appendChild(td);
+      el.appendChild(tr);
+    });
+  });
+
+  /* ---------- component reliability ---------- */
+  function compTable(kind) {
+    return function (el) {
+      var id = kind + '_comp';
+      if (!P.ok(id)) { P.clear(el); return; }
+      P.clear(el);
+      P.rows(id).forEach(function (r) {
+        var tr = document.createElement('tr');
+        var kept = String(r.kept) === 'True' || r.kept === true;
+        [r.component, P.num(r.direction) > 0 ? '+' : '−',
+         P.f2(r.split_half_r), P.f2(r.full_sample_r)].forEach(function (v) {
+          var td = document.createElement('td');
+          td.textContent = String(v);
+          tr.appendChild(td);
+        });
+        var td = document.createElement('td');
+        var sp = document.createElement('span');
+        sp.className = 'pill ' + (kept ? 'pill-ok' : 'pill-bad');
+        sp.textContent = kept ? 'kept' : 'dropped';
+        td.appendChild(sp);
+        tr.appendChild(td);
+        el.appendChild(tr);
+      });
+    };
+  }
+  dash.draw('comp-bowler', compTable('bowler'));
+  dash.draw('comp-batter', compTable('batter'));
+
+  dash.draw('comp-note', function (el) {
+    var kind = window.PRstate().disc, id = kind + '_comp';
+    P.clear(el);
+    if (!P.ok(id)) { el.appendChild(document.createTextNode('—')); return; }
+    var neg = P.rows(id).filter(function (r) { return P.num(r.split_half_r) < 0; });
+    el.appendChild(document.createTextNode(
+      neg.length
+        ? neg.length + ' component(s) scored negative split-half reliability ('
+          + neg.map(function (r) { return r.component; }).join(', ')
+          + '): they do not reproduce across a player’s own matches and carry zero weight.'
+        : 'Every candidate component reproduced above zero across a player’s own matches.'));
+  });
+
+  /* ---------- rank intervals ---------- */
+  function ciChart(kind) {
+    return function (el) {
+      var id = kind + '_rank';
+      var st = P.state(id);
+      if (st !== 'ok') { P.fail(el, st); return; }
+      var data = P.rows(id).slice(0, 15).filter(function (r) {
+        return P.num(r.rank_lo) != null && P.num(r.rank_hi) != null;
+      });
+      if (!data.length) { P.fail(el, 'empty'); return; }
+      var c = P.svg(el, data.length * 24 + 46), s = c.s;
+      s.attr('aria-label', '90 percent rank intervals');
+      var cap = Math.max(c.w * 0.42, 70);
+      var lw = P.labelWidth(s, data.map(function (d) { return d.name; }), cap);
+      var m = { t: 8, r: 18, b: 28, l: Math.ceil(lw) + 12 };
+      var x = d3.scaleLinear()
+        .domain([1, d3.max(data, function (d) { return P.num(d.rank_hi); })]).nice()
+        .range([m.l, c.w - m.r]);
+      var y = d3.scaleBand().domain(data.map(function (d) { return d.name; }))
+                .range([m.t, c.h - m.b]).padding(0.3);
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(0,' + (c.h - m.b) + ')')
+        .call(d3.axisBottom(x).ticks(5));
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(' + m.l + ',0)')
+        .call(d3.axisLeft(y).tickSize(0).tickFormat(function (d) { return P.shorten(d, lw); }));
+      s.append('line').attr('y1', m.t).attr('y2', c.h - m.b).attr('x1', x(10)).attr('x2', x(10))
+        .attr('stroke', 'var(--cds-chart-status-critical)').attr('stroke-dasharray', '3 3');
+      var t = P.tip(el);
+      data.forEach(function (d) {
+        var yy = y(d.name) + y.bandwidth() / 2;
+        s.append('line').attr('x1', x(P.num(d.rank_lo))).attr('x2', x(P.num(d.rank_hi)))
+          .attr('y1', yy).attr('y2', yy).style('stroke', dash.colors[0]).attr('stroke-width', 5)
+          .attr('stroke-linecap', 'round').attr('opacity', 0.5);
+        s.append('circle').attr('cx', x(P.num(d.rank) || 1)).attr('cy', yy).attr('r', 4)
+          .style('fill', dash.colors[0])
+          .on('mousemove', function (ev) {
+            var b = el.getBoundingClientRect();
+            t.show(ev.clientX - b.left, ev.clientY - b.top,
+                   [d.name, 'ranked ' + d.rank,
+                    '90% interval ' + Math.round(P.num(d.rank_lo)) + '–' + Math.round(P.num(d.rank_hi)),
+                    'P(real top 10) ' + P.pct(d.p_top10_uncond)]);
+          })
+          .on('mouseleave', t.hide);
+      });
+      P.legend(el, [{ c: dash.colors[0], t: 'point rank and 90% interval' },
+                    { c: 'var(--cds-chart-status-critical)', t: 'the top-10 cutoff' }]);
+    };
+  }
+  dash.draw('ci-bowler', ciChart('bowler'));
+  dash.draw('ci-batter', ciChart('batter'));
+
+  dash.draw('ci-note', function (el) {
+    var kind = window.PRstate().disc, id = kind + '_rank';
+    P.clear(el);
+    if (!P.ok(id)) { el.appendChild(document.createTextNode('—')); return; }
+    var r = P.rows(id).slice(0, 10);
+    var n80 = r.filter(function (x) { return P.num(x.p_top10_uncond) > 0.8; }).length;
+    el.appendChild(document.createTextNode(
+      n80 + ' of the top 10 exceed an unconditional P(top 10) of 0.80. Eligibility matters here: '
+      + 'a player who clears the ball floor in only part of the resamples has a lower unconditional '
+      + 'probability than their conditional one, which is why the two differ.'));
+  });
+
+  /* ---------- full decomposition ---------- */
+  function decomp(kind) {
+    return function (el) {
+      var id = kind + '_contrib';
+      var st = P.state(id);
+      if (st !== 'ok') { P.fail(el, st); return; }
+      var data = P.rows(id);
+      if (!data.length) { P.fail(el, 'empty'); return; }
+      var keys = Object.keys(data[0]).filter(function (k) {
+        return k !== 'player_id' && k !== 'name';
+      });
+      var long = [];
+      data.forEach(function (r) {
+        keys.forEach(function (k) {
+          var v = P.num(r[k]);
+          if (v != null && v !== 0) long.push({ name: r.name, k: k, v: v });
+        });
+      });
+      var c = P.svg(el, data.length * 30 + 50), s = c.s;
+      s.attr('aria-label', 'Signed component contributions');
+      var cap = Math.max(c.w * 0.42, 70);
+      var lw = P.labelWidth(s, data.map(function (r) { return r.name; }), cap);
+      var m = { t: 8, r: 16, b: 30, l: Math.ceil(lw) + 12 };
+      var x = d3.scaleLinear().domain(d3.extent(long, function (d) { return d.v; })).nice()
+                .range([m.l, c.w - m.r]);
+      var y = d3.scaleBand().domain(data.map(function (r) { return r.name; }))
+                .range([m.t, c.h - m.b]).padding(0.22);
+      var col = {};
+      keys.forEach(function (k, i) { col[k] = dash.colors[i % dash.colors.length]; });
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(0,' + (c.h - m.b) + ')')
+        .call(d3.axisBottom(x).ticks(5));
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(' + m.l + ',0)')
+        .call(d3.axisLeft(y).tickSize(0).tickFormat(function (d) { return P.shorten(d, lw); }));
+      var t = P.tip(el);
+      data.forEach(function (r) {
+        var pos = x(0), neg = x(0);
+        keys.forEach(function (k) {
+          var v = P.num(r[k]);
+          if (v == null || v === 0) return;
+          var wpx = Math.abs(x(v) - x(0));
+          var x0 = v > 0 ? pos : neg - wpx;
+          if (v > 0) pos += wpx; else neg -= wpx;
+          s.append('rect').attr('x', x0).attr('y', y(r.name))
+            .attr('width', Math.max(wpx, 0.6)).attr('height', y.bandwidth())
+            .style('fill', col[k])
+            .on('mousemove', function (ev) {
+              var b = el.getBoundingClientRect();
+              t.show(ev.clientX - b.left, ev.clientY - b.top,
+                     [r.name, k, (v > 0 ? '+' : '') + v.toFixed(3)]);
+            })
+            .on('mouseleave', t.hide);
+        });
+      });
+      s.append('line').attr('y1', m.t).attr('y2', c.h - m.b).attr('x1', x(0)).attr('x2', x(0))
+        .attr('stroke', 'var(--cds-chart-reference)');
+      P.legend(el, keys.map(function (k) { return { c: col[k], t: k }; }));
+    };
+  }
+  dash.draw('dec-bowler', decomp('bowler'));
+  dash.draw('dec-batter', decomp('batter'));
+
+  /* ---------- monthly ---------- */
+  function monthly(kind) {
+    return function (el) {
+      var id = kind + '_month';
+      var st = P.state(id);
+      if (st !== 'ok') { P.fail(el, st); return; }
+      var data = P.rows(id);
+      if (!data.length) { P.fail(el, 'empty'); return; }
+      var byM = d3.rollups(data, function (v) {
+        return {
+          pb: d3.sum(v, function (d) { return P.num(d.pressure_balls) || 0; }),
+          mp: d3.mean(v, function (d) { return P.num(d.mean_pressure); })
+        };
+      }, function (d) { return d.month; }).map(function (e) {
+        return { month: e[0], pb: e[1].pb, mp: e[1].mp };
+      }).filter(function (e) { return e.month; }).sort(function (a, b) {
+        return d3.ascending(a.month, b.month);
+      });
+      if (!byM.length) { P.fail(el, 'empty'); return; }
+      var c = P.svg(el, 250), s = c.s;
+      s.attr('aria-label', 'Pressure balls and mean pressure weight by month');
+      var m = { t: 10, r: 40, b: 46, l: 42 };
+      var x = d3.scaleBand().domain(byM.map(function (d) { return d.month; }))
+                .range([m.l, c.w - m.r]).padding(0.2);
+      var y = d3.scaleLinear().domain([0, d3.max(byM, function (d) { return d.pb; })]).nice()
+                .range([c.h - m.b, m.t]);
+      var y2 = d3.scaleLinear().domain([0, d3.max(byM, function (d) { return d.mp; }) || 1]).nice()
+                 .range([c.h - m.b, m.t]);
+      s.append('g').attr('class', 'grid').selectAll('line').data(y.ticks(4)).join('line')
+        .attr('x1', m.l).attr('x2', c.w - m.r).attr('y1', y).attr('y2', y);
+      var every = Math.ceil(byM.length / Math.max(Math.floor(c.w / 58), 3));
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(0,' + (c.h - m.b) + ')')
+        .call(d3.axisBottom(x).tickValues(x.domain().filter(function (d, i) {
+          return i % every === 0;
+        })))
+        .selectAll('text').attr('transform', 'rotate(-40)').style('text-anchor', 'end');
+      s.append('g').attr('class', 'ax').attr('transform', 'translate(' + m.l + ',0)')
+        .call(d3.axisLeft(y).ticks(4));
+      s.append('g').attr('class', 'ax')
+        .attr('transform', 'translate(' + (c.w - m.r) + ',0)')
+        .call(d3.axisRight(y2).ticks(4));
+      var t = P.tip(el);
+      s.selectAll(null).data(byM).join('rect')
+        .attr('x', function (d) { return x(d.month); }).attr('y', function (d) { return y(d.pb); })
+        .attr('width', x.bandwidth())
+        .attr('height', function (d) { return c.h - m.b - y(d.pb); })
+        .style('fill', dash.colors[0])
+        .on('mousemove', function (ev, d) {
+          var b = el.getBoundingClientRect();
+          t.show(ev.clientX - b.left, ev.clientY - b.top,
+                 [d.month, Math.round(d.pb) + ' pressure balls',
+                  'mean pressure ' + (d.mp == null ? '—' : d.mp.toFixed(2))]);
+        })
+        .on('mouseleave', t.hide);
+      s.append('path').datum(byM).attr('fill', 'none')
+        .style('stroke', dash.colors[1 % dash.colors.length]).attr('stroke-width', 1.6)
+        .attr('d', d3.line()
+          .x(function (d) { return x(d.month) + x.bandwidth() / 2; })
+          .y(function (d) { return y2(d.mp || 0); }));
+      P.legend(el, [{ c: dash.colors[0], t: 'pressure balls (left axis)' },
+                    { c: dash.colors[1 % dash.colors.length], t: 'mean pressure weight (right axis)' }]);
+    };
+  }
+  dash.draw('mon-bowler', monthly('bowler'));
+  dash.draw('mon-batter', monthly('batter'));
+})();
+</script>
+
+</div></body></html>
